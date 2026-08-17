@@ -1,0 +1,33 @@
+[package]
+name = "jet-server"
+description = "Control plane: public HTTP/JSON listener and internal JRP listener."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+jet-core.workspace = true
+jet-store.workspace = true
+jet-authz.workspace = true
+jet-proto.workspace = true
+
+axum.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
+serde.workspace = true
+serde_json.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[features]
+default = []
+# Exposes ServerState::for_test to downstream integration tests.
+test-util = []
+
+[dev-dependencies]
+tower.workspace = true
+http.workspace = true

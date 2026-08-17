@@ -1,8 +1,19 @@
 [package]
 name = "jet-proto"
+description = "JRP: the jetrun binary wire protocol over bare TCP."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+jet-core = { workspace = true, features = ["rkyv"] }
+rkyv = { workspace = true, features = ["std", "bytecheck"] }
+rustix = { workspace = true, features = ["net"] }
+libc.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "rt", "time", "macros"] }
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
