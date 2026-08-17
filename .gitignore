@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+
+# local state produced by running jetrun
+/.jetrun/
+*.db
+*.db-wal
+*.db-shm
+
+# perf artifacts
+perf.data*
+flamegraph.svg

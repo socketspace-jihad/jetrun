@@ -1,0 +1,28 @@
+[package]
+name = "jet-core"
+description = "Shared primitives: content digests, typed ids, error types."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+blake3.workspace = true
+hex.workspace = true
+ulid = { workspace = true, features = ["serde"] }
+serde.workspace = true
+thiserror.workspace = true
+rkyv = { workspace = true, optional = true }
+
+[features]
+default = []
+# Opt-in so the wire-protocol dependency does not reach crates that only need
+# a Digest.
+rkyv = ["dep:rkyv"]
+# Multi-threaded hashing for large blobs. Off by default: inside a shard-per-core
+# runtime an internal rayon pool would fight the shard threads for cores. Enable
+# it only in the CLI / single-shot ingest paths.
+rayon = ["blake3/rayon"]
+
+[dev-dependencies]
+serde_json.workspace = true

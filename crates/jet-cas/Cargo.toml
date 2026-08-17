@@ -1,0 +1,31 @@
+[package]
+name = "jet-cas"
+description = "Content-addressed object store: ingest, dedupe, reflink materialization, GC."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+jet-core.workspace = true
+blake3.workspace = true
+rustix.workspace = true
+libc.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+io-uring = { workspace = true, optional = true }
+
+[features]
+default = []
+# io_uring-backed IoBackend. Off by default: the blocking backend must stay the
+# reference implementation, since io_uring is unavailable under some hardened
+# seccomp profiles and container runtimes.
+uring = ["dep:io-uring"]
+
+[dev-dependencies]
+tempfile.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "cas"
+harness = false

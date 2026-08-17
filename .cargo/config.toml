@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------------------
+# Linker
+#
+# Linking dominates incremental rebuild time, so the linker is the single
+# largest build-time win available. mold is roughly 2-5x faster than GNU ld on
+# a workspace this size.
+#
+# Neither mold nor lld is installed on this machine yet, so the fast-linker
+# block is commented out -- uncommenting it before installing mold makes every
+# build fail with "linker not found". Install first:
+#
+#     sudo apt install mold        # then uncomment the block below
+#
+# Verify it took effect with:  cargo build -v 2>&1 | grep fuse-ld
+# ---------------------------------------------------------------------------
+
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# ---------------------------------------------------------------------------
+# target-cpu
+#
+# Deliberately NOT a default. On a self-hosted install you own the hardware and
+# this is free performance; in a distributed binary it produces SIGILL on any
+# CPU older than the build machine. Opt in per-deployment:
+#
+#     RUSTFLAGS="-C target-cpu=native" cargo build --profile dist
+#
+# Note blake3 already does runtime SIMD feature detection, so the CAS hot path
+# does not depend on this.
+# ---------------------------------------------------------------------------
+
+[alias]
+# Fast full-workspace check -- what to run while editing.
+c = "check --workspace --all-targets"
+t = "test --workspace"
+# Build with the iteration profile rather than the slow shipping one.
+rf = "build --profile release-fast"
+# Lint gate. Kept strict: this codebase does unsafe FFI and raw syscalls, so
+# sloppy lints are how memory bugs arrive.
+lint = "clippy --workspace --all-targets -- -D warnings"
+
+[build]
+# Keep incremental artifacts out of the way of `target/release` reads.
+# (default target-dir is fine; documented here for discoverability)
+
+[net]
+git-fetch-with-cli = true

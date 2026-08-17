@@ -1,0 +1,122 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "jetrun"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "Apache-2.0"
+repository = "https://github.com/jetrun/jetrun"
+
+# Single source of truth for versions. Member crates use `dep.workspace = true`
+# so we never end up compiling two copies of the same library.
+[workspace.dependencies]
+# --- internal ---
+jet-core = { path = "crates/jet-core" }
+jet-cas = { path = "crates/jet-cas" }
+jet-store = { path = "crates/jet-store" }
+jet-authz = { path = "crates/jet-authz" }
+jet-proto = { path = "crates/jet-proto" }
+
+# --- hashing / encoding ---
+blake3 = { version = "1.8", features = ["mmap"] }
+hex = "0.4"
+ulid = "3.0"
+
+# --- syscalls / io_uring ---
+rustix = { version = "1.1", features = ["fs", "mount", "process", "net", "thread", "param"] }
+io-uring = "0.7"
+libc = "0.2"
+
+# --- wire protocol ---
+rkyv = { version = "0.8", features = ["alloc"] }
+
+# --- async / http ---
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "io-util", "fs", "sync", "time", "signal", "process"] }
+axum = "0.8"
+
+# --- storage ---
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate", "chrono", "json"] }
+
+# --- serialization ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+
+# --- crypto ---
+argon2 = "0.5"
+rand = "0.9"
+subtle = "2.6"
+
+# --- misc ---
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+clap = { version = "4.6", features = ["derive", "env"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+zstd = "0.13"
+mimalloc = { version = "0.1", default-features = false }
+
+# --- dev ---
+tempfile = "3"
+criterion = { version = "0.7", features = ["html_reports"] }
+
+# ---------------------------------------------------------------------------
+# Build profiles
+#
+# `release` and "builds fast" are opposing goals, so they are separate profiles
+# rather than one compromise that is bad at both. See plan §13.
+# ---------------------------------------------------------------------------
+
+# Shipping artifacts. Fastest binary, slowest build.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+# NOT "abort": a panic must fail one step, not kill a worker supervising many
+# concurrent jobs. `panic` cannot be set per-crate, so this is one workspace-wide
+# choice, and for a CI system resilience beats the few percent.
+panic = "unwind"
+# Line tables only: usable backtraces from production without paying full
+# debuginfo link cost.
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+strip = "none"
+overflow-checks = false
+incremental = false
+
+# CI and local perf checks. Typically ~3-5x faster to build than `release`
+# for a few percent of runtime. Use this for anything you rebuild often.
+[profile.release-fast]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
+# What actually ships to users: `release` plus symbol stripping.
+[profile.dist]
+inherits = "release"
+strip = "symbols"
+debug = 0
+
+# Our crates unoptimized (fast to rebuild), dependencies optimized (compiled
+# once, then cached forever). Keeps iteration fast without making the code we
+# never edit crawl.
+[profile.dev]
+opt-level = 0
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+# Benchmarks and CAS tests move real bytes through blake3; running them against
+# an unoptimized build measures nothing useful.
+[profile.test]
+opt-level = 2
+
+[profile.bench]
+inherits = "release-fast"

@@ -1,0 +1,12 @@
+[package]
+name = "jetrun"
+description = "The jetrun binary: server, worker, and CLI in one artifact."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+jet-core.workspace = true
+jet-cas.workspace = true
+mimalloc.workspace = true
