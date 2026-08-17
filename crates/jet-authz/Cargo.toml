@@ -1,8 +1,17 @@
 [package]
 name = "jet-authz"
+description = "Authorization: scoped role assignment evaluation and decision caching."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+jet-core.workspace = true
+jet-store.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }

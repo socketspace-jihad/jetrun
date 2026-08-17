@@ -6,9 +6,13 @@
 //! depending on each other. It deliberately has no I/O, no async runtime, and no
 //! database: anything with a side effect belongs a layer up.
 
+pub mod authz;
 pub mod digest;
 pub mod id;
 
+pub use authz::{
+    Permission, Principal, PrincipalKind, Scope, ScopeKind, SystemRole, UnknownPermission,
+};
 pub use digest::{DIGEST_LEN, DIGEST_PREFIX, Digest, DigestParseError, Hasher};
 pub use id::{
     InvitationId, OrgId, PipelineId, ProjectId, RoleId, RunId, SecretId, ServiceAccountId, StepId,
