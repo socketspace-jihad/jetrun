@@ -3,14 +3,15 @@
 //! ## Why not gRPC?
 //!
 //! gRPC adds HTTP/2 framing, HPACK header encoding, and protobuf deserialization
-//! overhead on every call (~50-100μs). For a CI/CD system where cache lookups and
+//! overhead on every call (~50-100us). For a CI/CD system where cache lookups and
 //! log streaming happen thousands of times per build, this overhead is significant.
 //!
 //! jetrun-wire uses:
-//! - **8-byte fixed header** (vs 9+ bytes HTTP/2 frame + headers)
+//! - **16-byte fixed header** with magic bytes, version, and 4-billion stream IDs
 //! - **rkyv zero-copy deserialization** (vs protobuf allocating owned structs)
-//! - **Raw TCP with connection pooling** (vs HTTP/2 stream multiplexing)
-//! - **~5-10μs per call** (vs ~50-100μs for gRPC)
+//! - **Raw TCP with connection pooling** and platform-specific socket tuning
+//! - **Separate control (low-latency) and bulk (high-throughput) connection profiles**
+//! - **~5-10us per call** (vs ~50-100us for gRPC)
 //!
 //! ## Usage
 //!
@@ -38,6 +39,7 @@ pub mod frame;
 pub mod message;
 pub mod pool;
 pub mod server;
+pub mod tuning;
 
 pub use client::WireClient;
 pub use error::WireError;

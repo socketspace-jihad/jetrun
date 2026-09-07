@@ -35,7 +35,11 @@ impl WireServer {
     pub async fn serve(self) -> Result<(), WireError> {
         loop {
             let (stream, peer_addr) = self.listener.accept().await?;
-            stream.set_nodelay(true)?;
+            // Apply control tuning profile for low-latency RPC
+            let report = crate::tuning::TcpTuning::control().apply(&stream);
+            if !report.all_ok() {
+                tracing::debug!(peer = %peer_addr, ?report, "some socket options failed to apply");
+            }
 
             tracing::debug!(peer = %peer_addr, "wire connection accepted");
 
@@ -64,7 +68,7 @@ async fn handle_connection(
                 codec.send_frame(&Frame::pong()).await?;
             }
             MessageType::Request => {
-                let request_id = frame.request_id;
+                let stream_id = frame.stream_id;
 
                 // Deserialize request
                 let request =
@@ -78,9 +82,10 @@ async fn handle_connection(
                 let payload = rkyv::to_bytes::<rkyv::rancor::Error>(&response)
                     .map_err(|e| WireError::Serialize(e.to_string()))?;
 
+                // Response uses the same stream_id as the request
                 let response_frame = Frame::new(
                     MessageType::Response,
-                    request_id,
+                    stream_id,
                     Bytes::from(payload.into_vec()),
                 );
 

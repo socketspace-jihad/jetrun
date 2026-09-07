@@ -12,6 +12,8 @@ chrono = { workspace = true }
 thiserror = { workspace = true }
 tonic = { workspace = true }
 prost = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
 
 [build-dependencies]
 tonic-build = { workspace = true }

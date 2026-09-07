@@ -27,6 +27,9 @@ bytes = { workspace = true }
 memmap2 = { workspace = true }
 zstd = { workspace = true }
 lz4_flex = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,5 +1,6 @@
 pub mod api_key;
 pub mod build;
+pub mod digest;
 pub mod fingerprint;
 pub mod cache;
 pub mod organization;
@@ -14,6 +15,7 @@ pub mod webhook;
 pub use api_key::*;
 pub use build::*;
 pub use cache::*;
+pub use digest::*;
 pub use fingerprint::*;
 pub use organization::*;
 pub use pipeline::*;

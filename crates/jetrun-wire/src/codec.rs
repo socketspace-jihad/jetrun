@@ -17,8 +17,8 @@ impl FrameCodec {
     pub fn new(stream: TcpStream) -> Self {
         Self {
             stream,
-            read_buf: BytesMut::with_capacity(8192),
-            write_buf: BytesMut::with_capacity(8192),
+            read_buf: BytesMut::with_capacity(16384),
+            write_buf: BytesMut::with_capacity(16384),
         }
     }
 

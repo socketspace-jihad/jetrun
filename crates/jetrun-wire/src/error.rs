@@ -17,6 +17,12 @@ pub enum WireError {
     #[error("Serialization error: {0}")]
     Serialize(String),
 
+    #[error("Bad magic bytes: expected 'JR', got [{0:#04x}, {1:#04x}]")]
+    BadMagic(u8, u8),
+
+    #[error("Protocol version mismatch: got {got}, expected {expected}")]
+    VersionMismatch { got: u16, expected: u16 },
+
     #[error("Connection closed")]
     ConnectionClosed,
 

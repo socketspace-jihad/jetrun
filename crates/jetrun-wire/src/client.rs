@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use bytes::Bytes;
 
@@ -12,20 +12,27 @@ use crate::pool::ConnectionPool;
 /// Uses a connection pool for persistent TCP connections.
 pub struct WireClient {
     pool: Arc<ConnectionPool>,
-    next_request_id: AtomicU16,
+    /// Next stream ID. Client-initiated streams use odd IDs (starts at 1).
+    next_stream_id: AtomicU32,
 }
 
 impl WireClient {
     pub fn new(pool: Arc<ConnectionPool>) -> Self {
         Self {
             pool,
-            next_request_id: AtomicU16::new(1),
+            next_stream_id: AtomicU32::new(1), // odd = client-initiated
         }
+    }
+
+    /// Allocate the next client-initiated stream ID (always odd).
+    fn alloc_stream_id(&self) -> u32 {
+        // Increment by 2 to keep odd numbering
+        self.next_stream_id.fetch_add(2, Ordering::Relaxed)
     }
 
     /// Send a request and wait for the response.
     pub async fn call(&self, request: &WireRequest) -> Result<WireResponse, WireError> {
-        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let stream_id = self.alloc_stream_id();
 
         // Serialize with rkyv
         let payload = rkyv::to_bytes::<rkyv::rancor::Error>(request)
@@ -33,7 +40,7 @@ impl WireClient {
 
         let frame = Frame::new(
             MessageType::Request,
-            request_id,
+            stream_id,
             Bytes::from(payload.into_vec()),
         );
 
@@ -66,14 +73,14 @@ impl WireClient {
         &self,
         request: &WireRequest,
     ) -> Result<StreamReceiver, WireError> {
-        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let stream_id = self.alloc_stream_id();
 
         let payload = rkyv::to_bytes::<rkyv::rancor::Error>(request)
             .map_err(|e| WireError::Serialize(e.to_string()))?;
 
         let frame = Frame::new(
             MessageType::Request,
-            request_id,
+            stream_id,
             Bytes::from(payload.into_vec()),
         );
 
