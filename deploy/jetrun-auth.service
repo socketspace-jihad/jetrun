@@ -1,0 +1,41 @@
+[Unit]
+Description=jetrun Auth Service
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jetrun
+ExecStart=/opt/jetrun/bin/jetrun-auth
+Restart=on-failure
+RestartSec=3
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+Environment=RUST_LOG=info
+Environment=JWT_SECRET=change-me-in-production
+Environment=JWT_ACCESS_TTL_SECS=900
+Environment=JWT_REFRESH_TTL_DAYS=30
+Environment=SUPERADMIN_EMAIL=admin@jetrun.local
+Environment=SUPERADMIN_PASSWORD=changeme
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/jetrun/data
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+LimitNOFILE=65535
+LimitNPROC=4096
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jetrun-auth
+
+[Install]
+WantedBy=multi-user.target

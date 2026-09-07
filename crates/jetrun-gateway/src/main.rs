@@ -24,6 +24,15 @@ async fn main() -> anyhow::Result<()> {
     routes::webhooks::log_enabled_providers();
 
     let app = Router::new()
+        .route("/", axum::routing::get(|| async {
+            axum::Json(serde_json::json!({
+                "name": "jetrun",
+                "version": env!("CARGO_PKG_VERSION"),
+                "status": "running",
+                "docs": "/api/v1",
+                "health": "/health"
+            }))
+        }))
         .nest("/api/v1", routes::api_routes())
         .route("/health", axum::routing::get(|| async { "ok" }))
         .layer(CorsLayer::permissive())

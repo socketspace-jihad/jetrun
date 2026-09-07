@@ -1,0 +1,6 @@
+[Unit]
+Description=jetrun CI/CD Platform
+Wants=jetrun-gateway.service jetrun-engine.service jetrun-worker.service jetrun-cache.service jetrun-auth.service jetrun-web.service
+
+[Install]
+WantedBy=multi-user.target

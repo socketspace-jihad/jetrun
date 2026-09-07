@@ -1,0 +1,46 @@
+[Unit]
+Description=jetrun API Gateway
+After=network.target postgresql.service redis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jetrun
+ExecStart=/opt/jetrun/bin/jetrun-gateway
+Restart=on-failure
+RestartSec=3
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Environment
+Environment=RUST_LOG=info
+Environment=WEBHOOK_SECRET=
+Environment=JWT_SECRET=change-me-in-production
+Environment=ENGINE_URL=http://127.0.0.1:9001
+Environment=WORKER_URL=http://127.0.0.1:9002
+Environment=CACHE_URL=http://127.0.0.1:9003
+Environment=AUTH_SERVICE_URL=http://127.0.0.1:9004
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/jetrun/data
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+# Resource limits
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jetrun-gateway
+
+[Install]
+WantedBy=multi-user.target

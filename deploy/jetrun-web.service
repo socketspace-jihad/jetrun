@@ -1,0 +1,35 @@
+[Unit]
+Description=jetrun Web Dashboard
+After=network.target jetrun-gateway.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jetrun/web
+ExecStart=/usr/bin/node /opt/jetrun/web/.next/standalone/server.js
+Restart=on-failure
+RestartSec=3
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=HOSTNAME=0.0.0.0
+Environment=NEXT_PUBLIC_API_URL=http://127.0.0.1:8080
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/jetrun/web
+PrivateTmp=true
+
+LimitNOFILE=65535
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jetrun-web
+
+[Install]
+WantedBy=multi-user.target

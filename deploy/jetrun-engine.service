@@ -1,0 +1,39 @@
+[Unit]
+Description=jetrun Pipeline Engine
+After=network.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jetrun
+ExecStart=/opt/jetrun/bin/jetrun-engine
+Restart=on-failure
+RestartSec=3
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+Environment=RUST_LOG=info
+Environment=WORKER_URL=http://127.0.0.1:9002
+Environment=CACHE_URL=http://127.0.0.1:9003
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/jetrun/data
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+LimitNOFILE=65535
+LimitNPROC=4096
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jetrun-engine
+
+[Install]
+WantedBy=multi-user.target

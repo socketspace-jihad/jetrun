@@ -1,0 +1,38 @@
+[Unit]
+Description=jetrun Cache Service
+After=network.target redis.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jetrun
+ExecStart=/opt/jetrun/bin/jetrun-cache
+Restart=on-failure
+RestartSec=3
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+Environment=RUST_LOG=info
+Environment=CACHE_DIR=/opt/jetrun/data/cache
+Environment=REDIS_URL=redis://127.0.0.1:6379
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/jetrun/data/cache
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+LimitNOFILE=65535
+LimitNPROC=4096
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jetrun-cache
+
+[Install]
+WantedBy=multi-user.target

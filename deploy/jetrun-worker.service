@@ -1,0 +1,39 @@
+[Unit]
+Description=jetrun Build Worker
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jetrun
+ExecStart=/opt/jetrun/bin/jetrun-worker
+Restart=on-failure
+RestartSec=3
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+Environment=RUST_LOG=info
+Environment=CACHE_URL=http://127.0.0.1:9003
+Environment=MAX_CONCURRENT_STEPS=4
+Environment=WORKSPACE_DIR=/opt/jetrun/data/workspace
+
+# Worker needs Docker socket access
+SupplementaryGroups=docker
+
+# Hardening (less restrictive — needs Docker + workspace writes)
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/jetrun/data /var/run/docker.sock
+PrivateTmp=true
+
+LimitNOFILE=65535
+LimitNPROC=4096
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jetrun-worker
+
+[Install]
+WantedBy=multi-user.target
