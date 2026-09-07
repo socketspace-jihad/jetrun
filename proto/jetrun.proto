@@ -1,0 +1,197 @@
+syntax = "proto3";
+package jetrun;
+
+// Pipeline Engine Service — called by Gateway
+service PipelineEngine {
+    rpc ScheduleBuild(ScheduleBuildRequest) returns (ScheduleBuildResponse);
+    rpc CancelBuild(CancelBuildRequest) returns (CancelBuildResponse);
+    rpc GetBuildStatus(BuildStatusRequest) returns (BuildStatusResponse);
+    rpc StreamBuildEvents(BuildStatusRequest) returns (stream BuildEvent);
+}
+
+// Worker Service — called by Engine
+service WorkerService {
+    rpc ExecuteStep(ExecuteStepRequest) returns (stream StepOutput);
+    rpc CancelStep(CancelStepRequest) returns (CancelStepResponse);
+    rpc GetWorkerStatus(WorkerStatusRequest) returns (WorkerStatusResponse);
+}
+
+// Cache Service — called by Worker and Engine
+service CacheService {
+    rpc Get(CacheGetRequest) returns (stream CacheChunk);
+    rpc Put(stream CacheChunk) returns (CachePutResponse);
+    rpc Has(CacheHasRequest) returns (CacheHasResponse);
+    rpc Evict(CacheEvictRequest) returns (CacheEvictResponse);
+    rpc Stats(CacheStatsRequest) returns (CacheStatsResponse);
+}
+
+// --- Pipeline Engine Messages ---
+
+message ScheduleBuildRequest {
+    string pipeline_id = 1;
+    string trigger = 2;
+    optional string commit_sha = 3;
+    optional string branch = 4;
+    map<string, string> env = 5;
+}
+
+message ScheduleBuildResponse {
+    string build_id = 1;
+    uint64 build_number = 2;
+}
+
+message CancelBuildRequest {
+    string build_id = 1;
+}
+
+message CancelBuildResponse {
+    bool success = 1;
+}
+
+message BuildStatusRequest {
+    string build_id = 1;
+}
+
+message BuildStatusResponse {
+    string build_id = 1;
+    string status = 2;
+    repeated StageStatus stages = 3;
+}
+
+message StageStatus {
+    string stage_id = 1;
+    string name = 2;
+    string status = 3;
+    repeated StepStatus steps = 4;
+}
+
+message StepStatus {
+    string step_id = 1;
+    string name = 2;
+    string status = 3;
+    optional int32 exit_code = 4;
+    optional uint64 duration_ms = 5;
+    bool cache_hit = 6;
+}
+
+message BuildEvent {
+    string build_id = 1;
+    oneof event {
+        BuildStatusChanged status_changed = 2;
+        StageStatusChanged stage_changed = 3;
+        StepStatusChanged step_changed = 4;
+        LogLine log_line = 5;
+    }
+}
+
+message BuildStatusChanged {
+    string status = 1;
+}
+
+message StageStatusChanged {
+    string stage_id = 1;
+    string status = 2;
+}
+
+message StepStatusChanged {
+    string step_id = 1;
+    string status = 2;
+    optional int32 exit_code = 3;
+}
+
+message LogLine {
+    string step_id = 1;
+    uint64 line_number = 2;
+    string stream = 3;
+    string content = 4;
+    string timestamp = 5;
+}
+
+// --- Worker Messages ---
+
+message ExecuteStepRequest {
+    string step_id = 1;
+    string build_id = 2;
+    string command = 3;
+    optional string image = 4;
+    map<string, string> env = 5;
+    optional string working_dir = 6;
+    optional uint32 timeout_seconds = 7;
+}
+
+message StepOutput {
+    string step_id = 1;
+    oneof output {
+        LogLine log = 2;
+        StepCompleted completed = 3;
+    }
+}
+
+message StepCompleted {
+    int32 exit_code = 1;
+    uint64 duration_ms = 2;
+}
+
+message CancelStepRequest {
+    string step_id = 1;
+}
+
+message CancelStepResponse {
+    bool success = 1;
+}
+
+message WorkerStatusRequest {}
+
+message WorkerStatusResponse {
+    uint32 active_steps = 1;
+    uint32 max_concurrent = 2;
+    double cpu_usage = 3;
+    uint64 memory_bytes = 4;
+}
+
+// --- Cache Messages ---
+
+message CacheGetRequest {
+    string key = 1;
+    repeated string restore_keys = 2;
+}
+
+message CacheChunk {
+    string key = 1;
+    bytes data = 2;
+    uint64 offset = 3;
+    uint64 total_size = 4;
+}
+
+message CachePutResponse {
+    bool success = 1;
+    string content_hash = 2;
+    uint64 size_bytes = 3;
+}
+
+message CacheHasRequest {
+    string key = 1;
+}
+
+message CacheHasResponse {
+    bool exists = 1;
+    optional uint64 size_bytes = 2;
+}
+
+message CacheEvictRequest {
+    string key = 1;
+}
+
+message CacheEvictResponse {
+    bool success = 1;
+}
+
+message CacheStatsRequest {}
+
+message CacheStatsResponse {
+    uint64 total_entries = 1;
+    uint64 total_size_bytes = 2;
+    uint64 hit_count = 3;
+    uint64 miss_count = 4;
+    double hit_rate = 5;
+}

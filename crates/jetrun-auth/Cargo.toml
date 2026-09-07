@@ -1,0 +1,42 @@
+[package]
+name = "jetrun-auth"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "jetrun-auth"
+path = "src/main.rs"
+
+[features]
+default = ["sso-all"]
+sso-all = ["sso-google", "sso-github", "sso-gitlab"]
+sso-google = ["dep:oauth2", "dep:reqwest"]
+sso-github = ["dep:oauth2", "dep:reqwest"]
+sso-gitlab = ["dep:oauth2", "dep:reqwest"]
+
+[dependencies]
+mimalloc = { workspace = true }
+jetrun-common = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+dashmap = { workspace = true }
+blake3 = { workspace = true }
+jsonwebtoken = { workspace = true }
+argon2 = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
+
+# SSO (optional)
+oauth2 = { version = "5.0.0-rc.1", optional = true }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], optional = true, default-features = false }

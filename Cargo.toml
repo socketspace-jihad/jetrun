@@ -1,0 +1,92 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/jetrun-common",
+    "crates/jetrun-wire",
+    "crates/jetrun-gateway",
+    "crates/jetrun-engine",
+    "crates/jetrun-worker",
+    "crates/jetrun-cache",
+    "crates/jetrun-auth",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+futures = "0.3"
+
+# Web framework
+axum = { version = "0.8", features = ["ws", "macros"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
+
+# gRPC
+tonic = "0.12"
+prost = "0.13"
+tonic-build = "0.12"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+anyhow = "1"
+dashmap = "6"
+blake3 = { version = "1", features = ["mmap"] }
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+jsonwebtoken = "9"
+argon2 = "0.5"
+rand = { version = "0.9", features = ["os_rng"] }
+base64 = "0.22"
+
+# Performance
+mimalloc = "0.1"
+rkyv = { version = "0.8", features = ["bytecheck"] }
+bitflags = "2"
+zstd = "0.13"
+lz4_flex = "0.11"
+memmap2 = "0.9"
+bytes = "1"
+crossbeam = "0.8"
+glob = "0.3"
+
+# Benchmarking
+criterion = { version = "0.5", features = ["html_reports"] }
+
+# Internal
+jetrun-common = { path = "crates/jetrun-common" }
+jetrun-wire = { path = "crates/jetrun-wire" }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 0
+
+[profile.bench]
+inherits = "release"
+debug = true

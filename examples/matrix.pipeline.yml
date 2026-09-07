@@ -1,0 +1,42 @@
+name: "Matrix Build"
+description: "Test across multiple Rust versions and OS targets"
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+stages:
+  - name: test
+    matrix:
+      values:
+        rust: ["1.82", "stable", "nightly"]
+        os: ["ubuntu-latest", "macos-latest"]
+      exclude:
+        - rust: nightly
+          os: macos-latest
+    steps:
+      - name: "Test on {{ matrix.rust }} / {{ matrix.os }}"
+        image: "rust:{{ matrix.rust }}"
+        run: |
+          rustup show
+          cargo test --workspace --verbose
+        cache:
+          key: "cargo-{{ matrix.rust }}-{{ matrix.os }}-{{ hashFiles('Cargo.lock') }}"
+          paths: ["target/", "~/.cargo/registry"]
+          restore_keys:
+            - "cargo-{{ matrix.rust }}-{{ matrix.os }}-"
+            - "cargo-{{ matrix.rust }}-"
+
+  - name: coverage
+    depends_on: [test]
+    steps:
+      - name: Generate coverage report
+        image: "rust:stable"
+        run: |
+          cargo install cargo-tarpaulin
+          cargo tarpaulin --out xml
+        artifacts:
+          name: coverage-report
+          paths: ["cobertura.xml"]

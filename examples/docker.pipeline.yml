@@ -1,0 +1,52 @@
+name: "Docker Build & Deploy"
+description: "Build Docker image, push to registry, deploy to staging"
+
+on:
+  push:
+    branches: ["main"]
+  webhook: true
+
+cache:
+  docker_layer_cache: true
+
+env:
+  REGISTRY: registry.example.com
+  IMAGE_NAME: myapp
+
+stages:
+  - name: test
+    steps:
+      - name: Run tests
+        run: cargo test --workspace
+        cache:
+          key: "cargo-test-{{ hashFiles('Cargo.lock') }}"
+          paths: ["target/"]
+
+  - name: build
+    depends_on: [test]
+    steps:
+      - name: Build Docker image
+        image: docker:27
+        run: |
+          docker build \
+            --build-arg RUSTFLAGS="-C target-cpu=native" \
+            -t $REGISTRY/$IMAGE_NAME:$JETRUN_COMMIT_SHA \
+            -t $REGISTRY/$IMAGE_NAME:latest \
+            .
+
+      - name: Push to registry
+        image: docker:27
+        run: |
+          docker push $REGISTRY/$IMAGE_NAME:$JETRUN_COMMIT_SHA
+          docker push $REGISTRY/$IMAGE_NAME:latest
+
+  - name: deploy
+    depends_on: [build]
+    steps:
+      - name: Deploy to staging
+        run: |
+          kubectl set image deployment/myapp \
+            myapp=$REGISTRY/$IMAGE_NAME:$JETRUN_COMMIT_SHA \
+            --namespace=staging
+          kubectl rollout status deployment/myapp --namespace=staging --timeout=120s
+        timeout_minutes: 5
