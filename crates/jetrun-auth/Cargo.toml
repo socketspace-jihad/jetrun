@@ -8,11 +8,14 @@ name = "jetrun-auth"
 path = "src/main.rs"
 
 [features]
-default = ["sso-all"]
-sso-all = ["sso-google", "sso-github", "sso-gitlab"]
+# Default: local auth only. Enable SSO providers at compile time.
+default = []
+sso-all = ["sso-google", "sso-github", "sso-gitlab", "sso-bitbucket", "sso-apple"]
 sso-google = ["dep:oauth2", "dep:reqwest"]
 sso-github = ["dep:oauth2", "dep:reqwest"]
 sso-gitlab = ["dep:oauth2", "dep:reqwest"]
+sso-bitbucket = ["dep:oauth2", "dep:reqwest"]
+sso-apple = ["dep:oauth2", "dep:reqwest"]
 
 [dependencies]
 mimalloc = { workspace = true }
@@ -37,6 +40,6 @@ argon2 = { workspace = true }
 rand = { workspace = true }
 base64 = { workspace = true }
 
-# SSO (optional)
+# SSO (optional — pulled in by feature flags)
 oauth2 = { version = "5.0.0-rc.1", optional = true }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], optional = true, default-features = false }

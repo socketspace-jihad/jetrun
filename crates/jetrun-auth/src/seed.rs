@@ -2,7 +2,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use jetrun_common::models::{
-    builtin_role_permissions, Permission, Role, RolePermission, User, AuthProvider, AuthUser,
+    builtin_role_permissions, Permission, Role, RolePermission, User, AuthProvider,
     ALL_PERMISSIONS, ROLE_ADMIN, ROLE_DEVELOPER, ROLE_SUPER_ADMIN, ROLE_VIEWER,
 };
 

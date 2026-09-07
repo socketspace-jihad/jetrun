@@ -28,6 +28,8 @@ pub enum AuthProvider {
     Google,
     Github,
     Gitlab,
+    Bitbucket,
+    Apple,
     Saml,
 }
 
@@ -38,6 +40,8 @@ impl std::fmt::Display for AuthProvider {
             Self::Google => write!(f, "google"),
             Self::Github => write!(f, "github"),
             Self::Gitlab => write!(f, "gitlab"),
+            Self::Bitbucket => write!(f, "bitbucket"),
+            Self::Apple => write!(f, "apple"),
             Self::Saml => write!(f, "saml"),
         }
     }
