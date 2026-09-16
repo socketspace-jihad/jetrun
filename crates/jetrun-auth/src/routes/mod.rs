@@ -12,23 +12,18 @@ use axum::Router;
 use crate::state::AppState;
 
 pub fn api_routes() -> Router<AppState> {
+    // Merge all /auth routes into a single router to avoid axum nest conflicts
+    let auth_router = Router::new()
+        .merge(setup::routes())
+        .merge(auth::routes())
+        .merge(users::authenticated_routes())
+        .merge(sso::routes());
+
     Router::new()
-        // Setup (first deploy onboarding — public, one-time)
-        .nest("/auth", setup::routes())
-        // Public auth endpoints (register, login, refresh, logout, switch-org)
-        .nest("/auth", auth::routes())
-        // Authenticated user profile (/me, /me/password, /me/sessions)
-        .nest("/auth", users::authenticated_routes())
-        // Admin user management (org-scoped)
+        .nest("/auth", auth_router)
         .nest("/auth/users", users::admin_routes())
-        // API key management
         .nest("/auth/api-keys", api_keys::routes())
-        // Role + permission listing
         .nest("/auth/roles", roles::routes())
-        // Organization management
         .nest("/auth/orgs", orgs::routes())
-        // Team management (org-scoped)
         .nest("/auth", teams::routes())
-        // SSO (feature-gated)
-        .nest("/auth/sso", sso::routes())
 }
