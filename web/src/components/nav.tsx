@@ -30,17 +30,20 @@ const settingsSubNav = [
   { href: "/settings/api-keys", icon: Key, label: "API Keys" },
 ];
 
-// Mock user for display (will come from AuthProvider in production)
-const mockUser = {
-  display_name: "Super Admin",
-  email: "admin@jetrun.local",
-  role: "super_admin",
-};
+import { useAuth } from "@/components/auth-provider";
+import { DEMO_ENABLED, demoNavUser } from "@/lib/demo";
 
 export function Nav() {
   const pathname = usePathname();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const isSettingsPage = pathname.startsWith("/settings");
+  const { user: authUser, logout } = useAuth();
+
+  const navUser = DEMO_ENABLED
+    ? demoNavUser
+    : authUser
+      ? { display_name: authUser.display_name || authUser.username, email: authUser.email, role: authUser.role }
+      : null;
 
   return (
     <div className="flex shrink-0">
@@ -94,7 +97,7 @@ export function Nav() {
             className="relative"
           >
             <UserAvatar
-              name={mockUser.display_name}
+              name={navUser?.display_name || "User"}
               size="md"
               className="cursor-pointer hover:ring-2 hover:ring-nb-yellow transition-all"
             />
@@ -105,9 +108,9 @@ export function Nav() {
             <div className="absolute bottom-full left-full ml-2 mb-2 w-48 bg-nb-white border-2 border-nb-black rounded-xl shadow-neo-lg p-2 z-50">
               <div className="px-3 py-2 border-b border-nb-light mb-1">
                 <p className="font-black text-[12px] text-nb-black">
-                  {mockUser.display_name}
+                  {navUser?.display_name || "User"}
                 </p>
-                <p className="text-[10px] text-nb-gray">{mockUser.email}</p>
+                <p className="text-[10px] text-nb-gray">{navUser?.email || ""}</p>
               </div>
               <Link
                 href="/settings/account"
@@ -125,7 +128,10 @@ export function Nav() {
                 <Key className="w-3.5 h-3.5" />
                 API Keys
               </Link>
-              <button className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] font-bold text-nb-red hover:bg-nb-red/10 transition-colors w-full text-left">
+              <button
+                onClick={() => { logout(); setShowUserMenu(false); }}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] font-bold text-nb-red hover:bg-nb-red/10 transition-colors w-full text-left"
+              >
                 <LogOut className="w-3.5 h-3.5" />
                 Sign Out
               </button>

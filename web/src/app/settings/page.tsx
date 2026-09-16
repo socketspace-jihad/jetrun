@@ -10,25 +10,11 @@ import {
   Trash2,
   Server,
   Cpu,
-  HardDrive,
-  Activity,
 } from "lucide-react";
+import { DEMO_ENABLED, demoCacheStats, demoServices } from "@/lib/demo";
 
-const cacheStats = {
-  total_entries: 1247,
-  total_size_bytes: 2_147_483_648,
-  hit_count: 8934,
-  miss_count: 1203,
-  hit_rate: 0.881,
-  eviction_count: 342,
-};
-
-const services = [
-  { name: "gateway", status: "healthy", port: 8080, uptime: "3d 14h" },
-  { name: "engine", status: "healthy", port: 9001, uptime: "3d 14h" },
-  { name: "worker", status: "healthy", port: 9002, uptime: "3d 14h" },
-  { name: "cache", status: "healthy", port: 9003, uptime: "3d 14h" },
-];
+const cacheStats = demoCacheStats;
+const services = demoServices;
 
 export default function SettingsPage() {
   return (

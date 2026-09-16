@@ -1,48 +1,51 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { UserAvatar } from "@/components/user-avatar";
 import { User, Shield, Key, Monitor, LogOut } from "lucide-react";
-
-// Mock user data
-const mockUser = {
-  id: "u1",
-  email: "admin@jetrun.local",
-  username: "admin",
-  display_name: "Super Admin",
-  avatar_url: null,
-  role: "super_admin",
-  auth_provider: "local",
-  email_verified: true,
-  created_at: "2024-01-15T10:00:00Z",
-};
-
-const mockSessions = [
-  {
-    id: "s1",
-    user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-    ip_address: "127.0.0.1",
-    created_at: "2024-03-10T14:00:00Z",
-    last_used_at: "2024-03-10T15:30:00Z",
-    current: true,
-  },
-  {
-    id: "s2",
-    user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0)",
-    ip_address: "192.168.1.42",
-    created_at: "2024-03-09T09:00:00Z",
-    last_used_at: "2024-03-10T12:00:00Z",
-    current: false,
-  },
-];
+import { authApi } from "@/lib/auth";
+import { DEMO_ENABLED, demoCurrentUser, demoSessions } from "@/lib/demo";
 
 export default function AccountSettingsPage() {
-  const [displayName, setDisplayName] = useState(mockUser.display_name);
-  const [email] = useState(mockUser.email);
+  const [user, setUser] = useState<any>(DEMO_ENABLED ? demoCurrentUser : null);
+  const [sessions, setSessions] = useState<any[]>(DEMO_ENABLED ? demoSessions : []);
+  const [displayName, setDisplayName] = useState("");
+  const [loading, setLoading] = useState(!DEMO_ENABLED);
+
+  useEffect(() => {
+    if (DEMO_ENABLED) {
+      setDisplayName(demoCurrentUser.display_name || "");
+      return;
+    }
+    Promise.all([authApi.getMe(), authApi.listSessions()])
+      .then(([me, sess]) => {
+        setUser(me);
+        setDisplayName((me as any).display_name || "");
+        setSessions((sess.sessions as any) || []);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="p-8">
+        <p className="text-nb-gray text-[13px]">Loading account...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="p-8">
+        <p className="text-nb-gray text-[13px]">Not logged in. Please sign in first.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8">
@@ -52,6 +55,7 @@ export default function AccountSettingsPage() {
         </h1>
         <p className="text-[13px] text-nb-gray mt-1">
           Manage your profile, security, and active sessions
+          {DEMO_ENABLED && <Badge variant="warning" className="ml-2">Demo</Badge>}
         </p>
       </div>
 
@@ -66,47 +70,30 @@ export default function AccountSettingsPage() {
             <div className="flex items-center gap-4 mb-6">
               <UserAvatar name={displayName} size="lg" />
               <div>
-                <p className="font-black text-[14px]">{mockUser.username}</p>
-                <Badge
-                  variant={
-                    mockUser.role === "super_admin" ? "danger" : "default"
-                  }
-                >
-                  {mockUser.role.replace("_", " ")}
+                <p className="font-black text-[14px]">{user.username}</p>
+                <Badge variant={user.role === "super_admin" ? "danger" : "default"}>
+                  {(user.role || "").replace("_", " ")}
                 </Badge>
               </div>
             </div>
-
             <div className="space-y-4">
               <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
-                  Display Name
-                </label>
-                <Input
-                  value={displayName || ""}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                />
+                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Display Name</label>
+                <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
               </div>
               <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
-                  Email
-                </label>
-                <Input value={email} disabled />
+                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Email</label>
+                <Input value={user.email} disabled />
               </div>
               <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
-                  Username
-                </label>
-                <Input value={mockUser.username} disabled />
+                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Username</label>
+                <Input value={user.username} disabled />
               </div>
               <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
-                  Auth Provider
-                </label>
-                <Badge variant="info">{mockUser.auth_provider}</Badge>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Auth Provider</label>
+                <Badge variant="info">{user.auth_provider}</Badge>
               </div>
             </div>
-
             <div className="mt-5 flex justify-end">
               <Button size="sm">Save Profile</Button>
             </div>
@@ -122,21 +109,15 @@ export default function AccountSettingsPage() {
           <CardContent>
             <div className="space-y-4">
               <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
-                  Current Password
-                </label>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Current Password</label>
                 <Input type="password" placeholder="Enter current password" />
               </div>
               <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
-                  New Password
-                </label>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">New Password</label>
                 <Input type="password" placeholder="Min 8 characters" />
               </div>
               <div>
-                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
-                  Confirm New Password
-                </label>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Confirm New Password</label>
                 <Input type="password" placeholder="Repeat new password" />
               </div>
             </div>
@@ -157,7 +138,7 @@ export default function AccountSettingsPage() {
           </CardTitle>
           <CardContent>
             <div className="space-y-3">
-              {mockSessions.map((session) => (
+              {sessions.map((session: any, i: number) => (
                 <div
                   key={session.id}
                   className="flex items-center justify-between bg-nb-bg border border-nb-light rounded-xl px-4 py-3"
@@ -165,22 +146,20 @@ export default function AccountSettingsPage() {
                   <div>
                     <div className="flex items-center gap-2">
                       <p className="font-bold text-[12px] text-nb-black">
-                        {session.user_agent.includes("Macintosh")
+                        {(session.user_agent || "").includes("Macintosh")
                           ? "macOS"
-                          : session.user_agent.includes("iPhone")
+                          : (session.user_agent || "").includes("iPhone")
                             ? "iOS"
-                            : "Unknown"}
+                            : "Browser"}
                       </p>
-                      {session.current && (
-                        <Badge variant="success">Current</Badge>
-                      )}
+                      {(session.current || i === 0) && <Badge variant="success">Current</Badge>}
                     </div>
                     <p className="text-[11px] text-nb-gray mt-0.5">
-                      IP: {session.ip_address} &middot; Last active:{" "}
+                      IP: {session.ip_address || "—"} &middot; Last active:{" "}
                       {new Date(session.last_used_at).toLocaleDateString()}
                     </p>
                   </div>
-                  {!session.current && (
+                  {!(session.current || i === 0) && (
                     <Button variant="ghost" size="sm">
                       <LogOut className="w-3 h-3 mr-1" />
                       Revoke
@@ -188,6 +167,9 @@ export default function AccountSettingsPage() {
                   )}
                 </div>
               ))}
+              {sessions.length === 0 && (
+                <p className="text-[12px] text-nb-gray text-center py-4">No active sessions</p>
+              )}
             </div>
           </CardContent>
         </Card>
