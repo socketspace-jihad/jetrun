@@ -20,16 +20,14 @@ pub fn routes() -> Router<AppState> {
         .route("/setup", post(initial_setup))
 }
 
-/// Check if the platform has been set up (any user + org exists).
-/// This is a public endpoint — no auth required.
+/// Check if the platform has been set up.
+/// Setup is complete when at least one organization exists
+/// (the seeded super admin user doesn't count — an org means someone completed onboarding).
 async fn setup_status(State(state): State<AppState>) -> Json<Value> {
-    let has_users = !state.inner.users.is_empty();
     let has_orgs = !state.inner.organizations.is_empty();
 
     Json(json!({
-        "setup_completed": has_users && has_orgs,
-        "has_users": has_users,
-        "has_orgs": has_orgs,
+        "setup_completed": has_orgs,
     }))
 }
 
@@ -41,13 +39,13 @@ struct SetupRequest {
 }
 
 /// One-time initial setup. Creates the first org + admin user.
-/// Rejects if any user already exists (setup already done).
+/// Rejects if any org already exists (setup already done).
 async fn initial_setup(
     State(state): State<AppState>,
     Json(req): Json<SetupRequest>,
 ) -> Result<Json<Value>, StatusCode> {
-    // Guard: only works on fresh deploy
-    if !state.inner.users.is_empty() {
+    // Guard: only works when no org exists (fresh deploy or reset)
+    if !state.inner.organizations.is_empty() {
         return Ok(Json(json!({
             "error": "Setup already completed. Use /auth/register or /auth/login instead."
         })));
