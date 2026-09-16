@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AuthProvider } from "@/components/auth-provider";
-import { Nav } from "@/components/nav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -30,12 +29,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
         <AuthProvider>
-          <div className="flex h-screen">
-            <Nav />
-            <main className="flex-1 overflow-y-auto custom-scrollbar">
-              {children}
-            </main>
-          </div>
+          {children}
         </AuthProvider>
       </body>
     </html>

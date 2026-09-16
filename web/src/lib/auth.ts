@@ -87,4 +87,13 @@ export const authApi = {
   listUsers: () => authFetch<{ users: unknown[] }>("/auth/users"),
   listRoles: () => authFetch<{ roles: unknown[] }>("/auth/roles"),
   listPermissions: () => authFetch<{ permissions: unknown[] }>("/auth/permissions"),
+
+  // Setup (first deploy)
+  setupStatus: () =>
+    authFetch<{ setup_completed: boolean; has_users: boolean; has_orgs: boolean }>("/auth/setup/status"),
+  initialSetup: (data: { org_name: string; email: string; password: string }) =>
+    authFetch<AuthResponse & { setup_completed: boolean; org: { id: string; name: string; slug: string } }>("/auth/setup", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 };

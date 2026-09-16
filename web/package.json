@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
+    "build:prod": "next build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public 2>/dev/null; true",
     "start": "next start",
+    "start:prod": "HOSTNAME=0.0.0.0 PORT=3000 node .next/standalone/server.js",
     "lint": "next lint"
   },
   "dependencies": {
