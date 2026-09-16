@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/components/auth-provider";
 import { Zap } from "lucide-react";
@@ -19,16 +20,19 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const passwordsMatch = password === confirmPassword;
+  const passwordValid = password.length >= 8;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
-    if (password !== confirmPassword) {
+    if (!passwordsMatch) {
       setError("Passwords do not match");
       return;
     }
 
-    if (password.length < 8) {
+    if (!passwordValid) {
       setError("Password must be at least 8 characters");
       return;
     }
@@ -98,39 +102,44 @@ export default function RegisterPage() {
               <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
                 Password
               </label>
-              <Input
-                type="password"
+              <PasswordInput
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Min 8 characters"
                 required
               />
+              {password.length > 0 && !passwordValid && (
+                <p className="text-[10px] text-nb-red mt-1 font-bold">At least 8 characters</p>
+              )}
             </div>
 
             <div>
               <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
                 Confirm Password
               </label>
-              <Input
-                type="password"
+              <PasswordInput
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Repeat your password"
                 required
               />
+              {confirmPassword.length > 0 && !passwordsMatch && (
+                <p className="text-[10px] text-nb-red mt-1 font-bold">Passwords do not match</p>
+              )}
             </div>
 
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={loading || !passwordValid || !passwordsMatch}
+            >
               {loading ? "Creating account..." : "Create Account"}
             </Button>
           </form>
 
           <p className="text-center text-[12px] text-nb-gray mt-6">
             Already have an account?{" "}
-            <Link
-              href="/login"
-              className="font-black text-nb-blue hover:underline"
-            >
+            <Link href="/login" className="font-black text-nb-blue hover:underline">
               Sign In
             </Link>
           </p>

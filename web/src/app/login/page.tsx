@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Card } from "@/components/ui/card";
 import { useAuth } from "@/components/auth-provider";
 import { Zap, Github } from "lucide-react";
@@ -73,8 +74,7 @@ export default function LoginPage() {
               <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
                 Password
               </label>
-              <Input
-                type="password"
+              <PasswordInput
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter your password"

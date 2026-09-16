@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Card } from "@/components/ui/card";
 import { authApi } from "@/lib/auth";
 import { Zap, ArrowRight, Check, Building2, User, Rocket, Loader2 } from "lucide-react";
@@ -20,8 +21,8 @@ export default function SetupPage() {
   const [orgName, setOrgName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
 
-  // Check if setup is already done — redirect if so
   useEffect(() => {
     authApi
       .setupStatus()
@@ -32,13 +33,18 @@ export default function SetupPage() {
           setStep("org");
         }
       })
-      .catch(() => {
-        // API unreachable — show setup anyway (might be first boot)
-        setStep("org");
-      });
+      .catch(() => setStep("org"));
   }, [router]);
 
+  const passwordsMatch = password === confirmPassword;
+  const passwordValid = password.length >= 8;
+  const canSubmit = email.trim() && passwordValid && passwordsMatch && !loading;
+
   const handleCreateAll = async () => {
+    if (!passwordsMatch) {
+      setError("Passwords do not match");
+      return;
+    }
     setError("");
     setLoading(true);
     try {
@@ -48,7 +54,6 @@ export default function SetupPage() {
         password,
       });
 
-      // Store tokens
       if (res.access_token) {
         localStorage.setItem("jetrun_token", res.access_token);
         localStorage.setItem("jetrun_refresh_token", res.refresh_token);
@@ -62,7 +67,6 @@ export default function SetupPage() {
     }
   };
 
-  // Loading state while checking setup status
   if (step === "checking") {
     return (
       <div className="min-h-screen bg-nb-bg flex items-center justify-center">
@@ -195,15 +199,30 @@ export default function SetupPage() {
                 <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
                   Password
                 </label>
-                <Input
-                  type="password"
+                <PasswordInput
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Min 8 characters"
+                />
+                {password.length > 0 && !passwordValid && (
+                  <p className="text-[10px] text-nb-red mt-1 font-bold">At least 8 characters</p>
+                )}
+              </div>
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
+                  Confirm Password
+                </label>
+                <PasswordInput
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat your password"
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && email.trim() && password.length >= 8) handleCreateAll();
+                    if (e.key === "Enter" && canSubmit) handleCreateAll();
                   }}
                 />
+                {confirmPassword.length > 0 && !passwordsMatch && (
+                  <p className="text-[10px] text-nb-red mt-1 font-bold">Passwords do not match</p>
+                )}
               </div>
             </div>
 
@@ -213,7 +232,7 @@ export default function SetupPage() {
               </Button>
               <Button
                 className="flex-1"
-                disabled={!email.trim() || password.length < 8 || loading}
+                disabled={!canSubmit}
                 onClick={handleCreateAll}
               >
                 {loading ? "Setting up..." : "Create & Launch"}
