@@ -3,6 +3,7 @@ mod orgs;
 mod roles;
 mod groups;
 mod sessions;
+mod projects;
 mod api_keys;
 mod pipelines;
 mod builds;

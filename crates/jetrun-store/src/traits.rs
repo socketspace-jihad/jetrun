@@ -79,6 +79,18 @@ pub trait ApiKeyRepo: Send + Sync {
     async fn list_user_keys(&self, user_id: Uuid) -> Result<Vec<ApiKey>, StoreError>;
 }
 
+// ── Project ──
+
+#[async_trait]
+pub trait ProjectRepo: Send + Sync {
+    async fn create_project(&self, project: &jetrun_common::models::Project) -> Result<(), StoreError>;
+    async fn find_project_by_id(&self, id: Uuid) -> Result<Option<jetrun_common::models::Project>, StoreError>;
+    async fn list_projects_by_org(&self, org_id: Uuid) -> Result<Vec<jetrun_common::models::Project>, StoreError>;
+    async fn list_all_projects(&self) -> Result<Vec<jetrun_common::models::Project>, StoreError>;
+    async fn update_project(&self, project: &jetrun_common::models::Project) -> Result<(), StoreError>;
+    async fn delete_project(&self, id: Uuid) -> Result<bool, StoreError>;
+}
+
 // ── Pipeline ──
 
 #[async_trait]
@@ -120,11 +132,11 @@ pub trait GroupRepo: Send + Sync {
 // ── Combined Store ──
 
 pub trait Store:
-    UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + PipelineRepo + BuildRepo + GroupRepo
+    UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + ProjectRepo + PipelineRepo + BuildRepo + GroupRepo
 {
 }
 
 impl<T> Store for T where
-    T: UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + PipelineRepo + BuildRepo + GroupRepo
+    T: UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + ProjectRepo + PipelineRepo + BuildRepo + GroupRepo
 {
 }
