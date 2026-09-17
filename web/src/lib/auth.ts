@@ -86,7 +86,7 @@ export const authApi = {
   // Admin
   listUsers: () => authFetch<{ users: unknown[] }>("/auth/users"),
   listRoles: () => authFetch<{ roles: unknown[] }>("/auth/roles"),
-  listPermissions: () => authFetch<{ permissions: unknown[] }>("/auth/permissions"),
+  listPermissions: () => authFetch<{ permissions: unknown[] }>("/auth/roles/permissions"),
   inviteMember: (orgId: string, email: string, roleId?: string) =>
     authFetch<{ invited: boolean; member_id: string }>(`/auth/orgs/${orgId}/members`, {
       method: "POST",
