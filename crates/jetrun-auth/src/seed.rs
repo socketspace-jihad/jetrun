@@ -2,7 +2,7 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use jetrun_common::models::{
-    builtin_role_permissions, Permission, Role, RolePermission, User, AuthProvider,
+    builtin_role_permissions, Permission, Role, User, AuthProvider,
     ALL_PERMISSIONS, ROLE_ADMIN, ROLE_DEVELOPER, ROLE_SUPER_ADMIN, ROLE_VIEWER,
 };
 
@@ -11,15 +11,14 @@ use crate::services::password;
 
 /// Seed the system with built-in roles, permissions, and a super admin user.
 /// Called on first startup. Idempotent — skips if data already exists.
-pub fn seed(state: &AppState) {
+pub async fn seed(state: &AppState) {
     // Seed permissions
     let mut perm_map: std::collections::HashMap<String, Uuid> = std::collections::HashMap::new();
 
     for (name, description, resource, action) in ALL_PERMISSIONS {
-        if state.inner.permissions.contains_key(*name) {
-            if let Some(entry) = state.inner.permissions.get(*name) {
-                perm_map.insert(name.to_string(), entry.value().id);
-            }
+        // Check if permission already exists
+        if let Ok(Some(existing)) = state.store.find_permission_by_name(name).await {
+            perm_map.insert(name.to_string(), existing.id);
             continue;
         }
 
@@ -31,7 +30,7 @@ pub fn seed(state: &AppState) {
             action: action.to_string(),
         };
         perm_map.insert(name.to_string(), perm.id);
-        state.inner.permissions.insert(name.to_string(), perm);
+        let _ = state.store.create_permission(&perm).await;
     }
 
     tracing::info!(count = ALL_PERMISSIONS.len(), "permissions seeded");
@@ -45,7 +44,8 @@ pub fn seed(state: &AppState) {
     ];
 
     for (name, display_name, description) in &builtin_roles {
-        if state.inner.roles.iter().any(|r| r.value().name == *name && r.value().is_builtin) {
+        // Check if role already exists
+        if let Ok(Some(_)) = state.store.find_builtin_role(name).await {
             continue;
         }
 
@@ -62,28 +62,23 @@ pub fn seed(state: &AppState) {
 
         // Map permissions to this role
         let role_perms = builtin_role_permissions(name);
-        for perm_name in role_perms {
-            if let Some(perm_id) = perm_map.get(*perm_name) {
-                let rp = RolePermission {
-                    role_id: role.id,
-                    permission_id: *perm_id,
-                };
-                state.inner.role_permissions.entry(role.id)
-                    .or_insert_with(Vec::new)
-                    .push(rp);
-            }
-        }
+        let perm_ids: Vec<Uuid> = role_perms
+            .iter()
+            .filter_map(|perm_name| perm_map.get(*perm_name).copied())
+            .collect();
 
-        state.inner.roles.insert(role.id, role);
+        let _ = state.store.create_role(&role).await;
+        let _ = state.store.set_role_permissions(role.id, &perm_ids).await;
     }
 
     tracing::info!(count = builtin_roles.len(), "built-in roles seeded");
 
     // Seed super admin user if none exists
-    let has_super_admin = state.inner.users.iter().any(|u| {
-        let user = u.value();
-        user.auth_provider == AuthProvider::Local && user.email == state.config.superadmin_email
-    });
+    let has_super_admin = state.store
+        .find_user_by_email(&state.config.superadmin_email).await
+        .ok()
+        .flatten()
+        .is_some();
 
     if !has_super_admin {
         let password_hash = password::hash_password(&state.config.superadmin_password)
@@ -106,6 +101,6 @@ pub fn seed(state: &AppState) {
         };
 
         tracing::info!(email = %user.email, "super admin user seeded");
-        state.inner.users.insert(user.id, user);
+        let _ = state.store.create_user(&user).await;
     }
 }

@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use jetrun_common::models::AuthUser;
 
+use crate::services::session;
 use crate::state::AppState;
 
 /// Routes for the logged-in user's own profile
@@ -35,13 +36,13 @@ async fn get_me(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Json<Value> {
-    let user = match state.inner.users.get(&auth_user.user_id) {
-        Some(u) => u.clone(),
+    let user = match state.store.find_user_by_id(auth_user.user_id).await.ok().flatten() {
+        Some(u) => u,
         None => return Json(json!({ "error": "User not found" })),
     };
 
     let orgs: Vec<Value> = state
-        .list_user_orgs(auth_user.user_id)
+        .list_user_orgs(auth_user.user_id).await
         .into_iter()
         .map(|(org, role)| {
             json!({
@@ -81,17 +82,22 @@ async fn update_me(
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<UpdateProfileRequest>,
 ) -> Json<Value> {
-    if let Some(mut user) = state.inner.users.get_mut(&auth_user.user_id) {
-        if let Some(name) = req.display_name {
-            user.display_name = Some(name);
-        }
-        if let Some(url) = req.avatar_url {
-            user.avatar_url = Some(url);
-        }
-        user.updated_at = chrono::Utc::now();
-        Json(json!({ "updated": true }))
-    } else {
-        Json(json!({ "error": "User not found" }))
+    let mut user = match state.store.find_user_by_id(auth_user.user_id).await.ok().flatten() {
+        Some(u) => u,
+        None => return Json(json!({ "error": "User not found" })),
+    };
+
+    if let Some(name) = req.display_name {
+        user.display_name = Some(name);
+    }
+    if let Some(url) = req.avatar_url {
+        user.avatar_url = Some(url);
+    }
+    user.updated_at = chrono::Utc::now();
+
+    match state.store.update_user(&user).await {
+        Ok(()) => Json(json!({ "updated": true })),
+        Err(_) => Json(json!({ "error": "Failed to update user" })),
     }
 }
 
@@ -106,8 +112,8 @@ async fn change_password(
     Extension(auth_user): Extension<AuthUser>,
     Json(req): Json<ChangePasswordRequest>,
 ) -> Json<Value> {
-    let user = match state.inner.users.get(&auth_user.user_id) {
-        Some(u) => u.clone(),
+    let mut user = match state.store.find_user_by_id(auth_user.user_id).await.ok().flatten() {
+        Some(u) => u,
         None => return Json(json!({ "error": "User not found" })),
     };
 
@@ -126,15 +132,11 @@ async fn change_password(
         Err(_) => return Json(json!({ "error": "Failed to hash password" })),
     };
 
-    if let Some(mut u) = state.inner.users.get_mut(&auth_user.user_id) {
-        u.password_hash = Some(new_hash);
-        u.updated_at = chrono::Utc::now();
-    }
+    user.password_hash = Some(new_hash);
+    user.updated_at = chrono::Utc::now();
+    let _ = state.store.update_user(&user).await;
 
-    state
-        .inner
-        .session_store
-        .revoke_all_user_sessions(auth_user.user_id);
+    session::revoke_all_user_sessions(state.store.as_ref(), auth_user.user_id).await;
 
     Json(json!({ "updated": true }))
 }
@@ -143,10 +145,8 @@ async fn list_my_sessions(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Json<Value> {
-    let sessions: Vec<Value> = state
-        .inner
-        .session_store
-        .get_user_sessions(auth_user.user_id)
+    let sessions: Vec<Value> = session::get_user_sessions(state.store.as_ref(), auth_user.user_id)
+        .await
         .iter()
         .map(|s| {
             json!({
@@ -168,13 +168,10 @@ async fn revoke_my_session(
     Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<Uuid>,
 ) -> Json<Value> {
-    let sessions = state
-        .inner
-        .session_store
-        .get_user_sessions(auth_user.user_id);
+    let sessions = session::get_user_sessions(state.store.as_ref(), auth_user.user_id).await;
 
     if sessions.iter().any(|s| s.id == session_id) {
-        state.inner.session_store.revoke_session(session_id);
+        session::revoke_session(state.store.as_ref(), session_id).await;
         Json(json!({ "revoked": true }))
     } else {
         Json(json!({ "error": "Session not found" }))
@@ -188,14 +185,14 @@ async fn list_users(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<Json<Value>, StatusCode> {
-    if !auth_user.has_permission("user:read") && !state.is_super_admin(auth_user.user_id) {
+    if !auth_user.has_permission("user:read") && !state.is_super_admin(auth_user.user_id).await {
         return Err(StatusCode::FORBIDDEN);
     }
 
     let org_id = auth_user.org_id.ok_or(StatusCode::BAD_REQUEST)?;
 
     let users: Vec<Value> = state
-        .list_org_members(org_id)
+        .list_org_members(org_id).await
         .into_iter()
         .map(|(user, role, member)| {
             json!({
@@ -221,19 +218,19 @@ async fn get_user(
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, StatusCode> {
-    if !auth_user.has_permission("user:read") && !state.is_super_admin(auth_user.user_id) {
+    if !auth_user.has_permission("user:read") && !state.is_super_admin(auth_user.user_id).await {
         return Err(StatusCode::FORBIDDEN);
     }
 
     // Verify target user is in the same org
     let org_id = auth_user.org_id.ok_or(StatusCode::BAD_REQUEST)?;
-    if !state.is_org_member(id, org_id) && !state.is_super_admin(auth_user.user_id) {
+    if !state.is_org_member(id, org_id).await && !state.is_super_admin(auth_user.user_id).await {
         return Err(StatusCode::NOT_FOUND);
     }
 
-    match state.inner.users.get(&id) {
+    match state.store.find_user_by_id(id).await.ok().flatten() {
         Some(u) => {
-            let role = state.get_user_role_in_org(id, org_id);
+            let role = state.get_user_role_in_org(id, org_id).await;
             Ok(Json(json!({
                 "id": u.id,
                 "email": u.email,
@@ -261,7 +258,7 @@ async fn change_user_role(
     Path(user_id): Path<Uuid>,
     Json(req): Json<ChangeRoleRequest>,
 ) -> Result<Json<Value>, StatusCode> {
-    if !auth_user.has_permission("user:manage") && !state.is_super_admin(auth_user.user_id) {
+    if !auth_user.has_permission("user:manage") && !state.is_super_admin(auth_user.user_id).await {
         return Err(StatusCode::FORBIDDEN);
     }
 
@@ -273,18 +270,18 @@ async fn change_user_role(
     }
 
     // Verify target user is in this org
-    if !state.is_org_member(user_id, org_id) {
+    if !state.is_org_member(user_id, org_id).await {
         return Ok(Json(json!({ "error": "User is not a member of this organization" })));
     }
 
     // Verify role exists
-    if !state.inner.roles.contains_key(&req.role_id) {
+    if state.store.find_role_by_id(req.role_id).await.ok().flatten().is_none() {
         return Ok(Json(json!({ "error": "Role not found" })));
     }
 
     // Remove old membership, add new one with new role
-    state.remove_org_member(org_id, user_id);
-    state.add_org_member(org_id, user_id, req.role_id);
+    state.remove_org_member(org_id, user_id).await;
+    state.add_org_member(org_id, user_id, req.role_id).await;
 
     Ok(Json(json!({ "updated": true })))
 }
@@ -295,7 +292,7 @@ async fn deactivate_user(
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Value>, StatusCode> {
-    if !auth_user.has_permission("user:delete") && !state.is_super_admin(auth_user.user_id) {
+    if !auth_user.has_permission("user:delete") && !state.is_super_admin(auth_user.user_id).await {
         return Err(StatusCode::FORBIDDEN);
     }
 
@@ -304,12 +301,14 @@ async fn deactivate_user(
         return Ok(Json(json!({ "error": "Cannot deactivate yourself" })));
     }
 
-    if let Some(mut user) = state.inner.users.get_mut(&id) {
-        user.is_active = false;
-        user.updated_at = chrono::Utc::now();
-        state.inner.session_store.revoke_all_user_sessions(id);
-        Ok(Json(json!({ "deactivated": true })))
-    } else {
-        Err(StatusCode::NOT_FOUND)
+    match state.store.find_user_by_id(id).await.ok().flatten() {
+        Some(mut user) => {
+            user.is_active = false;
+            user.updated_at = chrono::Utc::now();
+            let _ = state.store.update_user(&user).await;
+            session::revoke_all_user_sessions(state.store.as_ref(), id).await;
+            Ok(Json(json!({ "deactivated": true })))
+        }
+        None => Err(StatusCode::NOT_FOUND),
     }
 }

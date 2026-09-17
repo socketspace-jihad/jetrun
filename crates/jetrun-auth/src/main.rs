@@ -2,6 +2,8 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+use std::sync::Arc;
+
 use axum::Router;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -28,10 +30,18 @@ async fn main() -> anyhow::Result<()> {
     let config = AuthServiceConfig::from_env();
     let addr = format!("{}:{}", config.host, config.port);
 
-    let state = AppState::new(config);
+    // Connect to database
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://jetrun:jetrun_dev@localhost:5432/jetrun".into());
+
+    let store = Arc::new(
+        jetrun_store::PgStore::connect(&database_url).await?
+    );
+
+    let state = AppState::new(store, config);
 
     // Seed built-in roles, permissions, and super admin
-    seed::seed(&state);
+    seed::seed(&state).await;
     routes::sso::log_enabled_providers();
 
     let app = Router::new()

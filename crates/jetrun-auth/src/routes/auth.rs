@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use jetrun_common::models::{AuthProvider, Organization, User};
 
-use crate::services::{jwt, password};
+use crate::services::{jwt, password, session};
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
@@ -97,10 +97,10 @@ async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
 ) -> Result<Json<Value>, StatusCode> {
-    if state.find_user_by_email(&req.email).is_some() {
+    if state.find_user_by_email(&req.email).await.is_some() {
         return Ok(Json(json!({ "error": "Email already registered" })));
     }
-    if state.find_user_by_username(&req.username).is_some() {
+    if state.find_user_by_username(&req.username).await.is_some() {
         return Ok(Json(json!({ "error": "Username already taken" })));
     }
 
@@ -124,7 +124,7 @@ async fn register(
         updated_at: Utc::now(),
     };
     let user_id = user.id;
-    state.inner.users.insert(user_id, user.clone());
+    state.store.create_user(&user).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // 2. Create default org for this user
     let org_name = req.org_name.unwrap_or_else(|| format!("{}'s Org", req.username));
@@ -138,15 +138,15 @@ async fn register(
         updated_at: Utc::now(),
     };
     let org_id = org.id;
-    state.inner.organizations.insert(org_id, org.clone());
+    state.store.create_org(&org).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // 3. Add user as admin of their org
-    let admin_role = state.find_builtin_role("admin")
+    let admin_role = state.find_builtin_role("admin").await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    state.add_org_member(org_id, user_id, admin_role.id);
+    state.add_org_member(org_id, user_id, admin_role.id).await;
 
     // 4. Build auth context and issue tokens
-    let auth_user = state.build_auth_user(user_id, Some(org_id))
+    let auth_user = state.build_auth_user(user_id, Some(org_id)).await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let access_token = jwt::create_access_token(
@@ -155,14 +155,15 @@ async fn register(
         state.config.jwt_access_ttl_secs,
     ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let (refresh_token, _) = state.inner.session_store.create_session(
+    let (refresh_token, _) = session::create_session(
+        state.store.as_ref(),
         user_id,
         state.config.jwt_refresh_ttl_days,
         None,
         None,
-    );
+    ).await.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let orgs = build_org_list(&state, user_id);
+    let orgs = build_org_list(&state, user_id).await;
 
     Ok(Json(json!(AuthResponse {
         access_token,
@@ -190,7 +191,7 @@ async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     let user = state
-        .find_user_by_email(&req.email)
+        .find_user_by_email(&req.email).await
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     if !user.is_active {
@@ -205,29 +206,29 @@ async fn login(
     }
 
     // Update last login
-    if let Some(mut u) = state.inner.users.get_mut(&user.id) {
-        u.last_login_at = Some(Utc::now());
-    }
+    let mut updated_user = user.clone();
+    updated_user.last_login_at = Some(Utc::now());
+    let _ = state.store.update_user(&updated_user).await;
 
     // Resolve which org to log into
-    let user_orgs = state.list_user_orgs(user.id);
+    let user_orgs = state.list_user_orgs(user.id).await;
     let org_id = if let Some(requested_org) = req.org_id {
         // Verify user is a member of the requested org (or is super admin)
-        if state.is_org_member(user.id, requested_org) || state.is_super_admin(user.id) {
+        if state.is_org_member(user.id, requested_org).await || state.is_super_admin(user.id).await {
             Some(requested_org)
         } else {
             return Ok(Json(json!({ "error": "Not a member of this organization" })));
         }
     } else if let Some((first_org, _)) = user_orgs.first() {
         Some(first_org.id)
-    } else if state.is_super_admin(user.id) {
+    } else if state.is_super_admin(user.id).await {
         // Super admin with no org — platform context
         None
     } else {
         return Ok(Json(json!({ "error": "User has no organization. Contact an admin." })));
     };
 
-    let auth_user = state.build_auth_user(user.id, org_id)
+    let auth_user = state.build_auth_user(user.id, org_id).await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let access_token = jwt::create_access_token(
@@ -236,22 +237,24 @@ async fn login(
         state.config.jwt_access_ttl_secs,
     ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let (refresh_token, _) = state.inner.session_store.create_session(
+    let (refresh_token, _) = session::create_session(
+        state.store.as_ref(),
         user.id,
         state.config.jwt_refresh_ttl_days,
         None,
         None,
-    );
+    ).await.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let orgs = build_org_list(&state, user.id);
+    let orgs = build_org_list(&state, user.id).await;
 
-    let org_response = org_id.and_then(|oid| {
-        state.inner.organizations.get(&oid).map(|o| OrgResponse {
+    let org_response = match org_id {
+        Some(oid) => state.store.find_org_by_id(oid).await.ok().flatten().map(|o| OrgResponse {
             id: o.id,
-            name: o.name.clone(),
-            slug: o.slug.clone(),
-        })
-    });
+            name: o.name,
+            slug: o.slug,
+        }),
+        None => None,
+    };
 
     Ok(Json(json!({
         "access_token": access_token,
@@ -275,17 +278,14 @@ async fn switch_org(
     Json(req): Json<SwitchOrgRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     // Validate refresh token to get user
-    let session = state
-        .inner
-        .session_store
-        .validate_refresh_token(&req.refresh_token)
+    let sess = session::validate_refresh_token(state.store.as_ref(), &req.refresh_token)
+        .await
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let user = state
-        .inner
-        .users
-        .get(&session.user_id)
-        .map(|u| u.clone())
+    let user = state.store
+        .find_user_by_id(sess.user_id).await
+        .ok()
+        .flatten()
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     if !user.is_active {
@@ -293,12 +293,12 @@ async fn switch_org(
     }
 
     // Verify membership in target org (or super admin)
-    if !state.is_org_member(user.id, req.org_id) && !state.is_super_admin(user.id) {
+    if !state.is_org_member(user.id, req.org_id).await && !state.is_super_admin(user.id).await {
         return Ok(Json(json!({ "error": "Not a member of this organization" })));
     }
 
     // Issue new token with new org context
-    let auth_user = state.build_auth_user(user.id, Some(req.org_id))
+    let auth_user = state.build_auth_user(user.id, Some(req.org_id)).await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let access_token = jwt::create_access_token(
@@ -308,16 +308,16 @@ async fn switch_org(
     ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Rotate refresh token
-    let (new_refresh_token, _) = state
-        .inner
-        .session_store
-        .rotate_refresh_token(&req.refresh_token, state.config.jwt_refresh_ttl_days)
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let (new_refresh_token, _) = session::rotate_refresh_token(
+        state.store.as_ref(),
+        &req.refresh_token,
+        state.config.jwt_refresh_ttl_days,
+    ).await.ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let org = state.inner.organizations.get(&req.org_id)
-        .map(|o| OrgResponse { id: o.id, name: o.name.clone(), slug: o.slug.clone() });
+    let org = state.store.find_org_by_id(req.org_id).await.ok().flatten()
+        .map(|o| OrgResponse { id: o.id, name: o.name, slug: o.slug });
 
-    let orgs = build_org_list(&state, user.id);
+    let orgs = build_org_list(&state, user.id).await;
 
     Ok(Json(json!({
         "access_token": access_token,
@@ -340,17 +340,16 @@ async fn refresh(
     State(state): State<AppState>,
     Json(req): Json<RefreshRequest>,
 ) -> Result<Json<Value>, StatusCode> {
-    let (new_refresh_token, session) = state
-        .inner
-        .session_store
-        .rotate_refresh_token(&req.refresh_token, state.config.jwt_refresh_ttl_days)
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let (new_refresh_token, sess) = session::rotate_refresh_token(
+        state.store.as_ref(),
+        &req.refresh_token,
+        state.config.jwt_refresh_ttl_days,
+    ).await.ok_or(StatusCode::UNAUTHORIZED)?;
 
-    let user = state
-        .inner
-        .users
-        .get(&session.user_id)
-        .map(|u| u.clone())
+    let user = state.store
+        .find_user_by_id(sess.user_id).await
+        .ok()
+        .flatten()
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     if !user.is_active {
@@ -359,16 +358,16 @@ async fn refresh(
 
     // Use requested org_id, or fall back to first org
     let org_id = if let Some(oid) = req.org_id {
-        if state.is_org_member(user.id, oid) || state.is_super_admin(user.id) {
+        if state.is_org_member(user.id, oid).await || state.is_super_admin(user.id).await {
             Some(oid)
         } else {
             return Err(StatusCode::FORBIDDEN);
         }
     } else {
-        state.list_user_orgs(user.id).first().map(|(org, _)| org.id)
+        state.list_user_orgs(user.id).await.first().map(|(org, _)| org.id)
     };
 
-    let auth_user = state.build_auth_user(user.id, org_id)
+    let auth_user = state.build_auth_user(user.id, org_id).await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let access_token = jwt::create_access_token(
@@ -387,17 +386,17 @@ async fn logout(
     State(state): State<AppState>,
     Json(req): Json<RefreshRequest>,
 ) -> Json<Value> {
-    if let Some(session) = state.inner.session_store.validate_refresh_token(&req.refresh_token) {
-        state.inner.session_store.revoke_session(session.id);
+    if let Some(sess) = session::validate_refresh_token(state.store.as_ref(), &req.refresh_token).await {
+        session::revoke_session(state.store.as_ref(), sess.id).await;
     }
     Json(json!({ "logged_out": true }))
 }
 
 // ── Helpers ──
 
-fn build_org_list(state: &AppState, user_id: Uuid) -> Vec<OrgListItem> {
+async fn build_org_list(state: &AppState, user_id: Uuid) -> Vec<OrgListItem> {
     state
-        .list_user_orgs(user_id)
+        .list_user_orgs(user_id).await
         .into_iter()
         .map(|(org, role)| OrgListItem {
             id: org.id,

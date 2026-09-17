@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use jetrun_common::models::{AuthProvider, Organization, User};
 
-use crate::services::jwt;
+use crate::services::{jwt, session};
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
@@ -148,15 +148,15 @@ async fn callback(
     };
 
     // 3. Find or create user
-    let user = find_or_create_sso_user(&state, &sso_user, auth_provider);
+    let user = find_or_create_sso_user(&state, &sso_user, auth_provider).await;
 
     // 4. Update last login
-    if let Some(mut u) = state.inner.users.get_mut(&user.id) {
-        u.last_login_at = Some(Utc::now());
-    }
+    let mut updated_user = user.clone();
+    updated_user.last_login_at = Some(Utc::now());
+    let _ = state.store.update_user(&updated_user).await;
 
     // 5. Resolve org (use first org, or create default)
-    let user_orgs = state.list_user_orgs(user.id);
+    let user_orgs = state.list_user_orgs(user.id).await;
     let org_id = if let Some((org, _)) = user_orgs.first() {
         org.id
     } else {
@@ -170,15 +170,15 @@ async fn callback(
             updated_at: Utc::now(),
         };
         let oid = org.id;
-        state.inner.organizations.insert(oid, org);
-        let admin_role = state.find_builtin_role("admin")
+        state.store.create_org(&org).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let admin_role = state.find_builtin_role("admin").await
             .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-        state.add_org_member(oid, user.id, admin_role.id);
+        state.add_org_member(oid, user.id, admin_role.id).await;
         oid
     };
 
     // 6. Build auth context and issue tokens
-    let auth_user = state.build_auth_user(user.id, Some(org_id))
+    let auth_user = state.build_auth_user(user.id, Some(org_id)).await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let access_token = jwt::create_access_token(
@@ -187,15 +187,16 @@ async fn callback(
         state.config.jwt_access_ttl_secs,
     ).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let (refresh_token, _) = state.inner.session_store.create_session(
+    let (refresh_token, _) = session::create_session(
+        state.store.as_ref(),
         user.id,
         state.config.jwt_refresh_ttl_days,
         None,
         None,
-    );
+    ).await.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let orgs: Vec<Value> = state
-        .list_user_orgs(user.id)
+        .list_user_orgs(user.id).await
         .into_iter()
         .map(|(org, role)| json!({ "id": org.id, "name": org.name, "slug": org.slug, "role": role.display_name }))
         .collect();
@@ -400,45 +401,40 @@ async fn fetch_user_info(provider: &str, access_token: &str) -> anyhow::Result<S
 
 // ── Find or create user from SSO info ──
 
-fn find_or_create_sso_user(state: &AppState, info: &SsoUserInfo, provider: AuthProvider) -> User {
-    // Try to find existing user by provider_id
-    let existing = state
-        .inner
-        .users
-        .iter()
-        .find(|e| {
-            let u = e.value();
-            u.auth_provider == provider && u.provider_id.as_deref() == Some(&info.provider_id)
-        })
-        .map(|e| e.value().clone());
-
-    if let Some(mut user) = existing {
-        // Update avatar/name if changed
-        if let Some(mut u) = state.inner.users.get_mut(&user.id) {
-            if info.avatar_url.is_some() {
-                u.avatar_url = info.avatar_url.clone();
-            }
-            if info.name.is_some() {
-                u.display_name = info.name.clone();
-            }
-        }
-        user.avatar_url = info.avatar_url.clone().or(user.avatar_url);
-        user.display_name = info.name.clone().or(user.display_name);
-        return user;
-    }
-
-    // Try to find by email (link SSO to existing local account)
+async fn find_or_create_sso_user(state: &AppState, info: &SsoUserInfo, provider: AuthProvider) -> User {
+    // Try to find existing user by email first (provider_id lookup would require a new store method)
     if let Some(email) = &info.email {
-        if let Some(existing) = state.find_user_by_email(email) {
-            // Update provider info on existing account
-            if let Some(mut u) = state.inner.users.get_mut(&existing.id) {
-                u.auth_provider = provider;
-                u.provider_id = Some(info.provider_id.clone());
+        if let Some(existing) = state.find_user_by_email(email).await {
+            // If the user already exists with a different provider, link SSO
+            if existing.auth_provider != provider || existing.provider_id.as_deref() != Some(&info.provider_id) {
+                let mut updated = existing.clone();
+                updated.auth_provider = provider;
+                updated.provider_id = Some(info.provider_id.clone());
                 if info.avatar_url.is_some() {
-                    u.avatar_url = info.avatar_url.clone();
+                    updated.avatar_url = info.avatar_url.clone();
                 }
+                if info.name.is_some() {
+                    updated.display_name = info.name.clone();
+                }
+                let _ = state.store.update_user(&updated).await;
+                return updated;
             }
-            return existing;
+
+            // Update avatar/name if changed
+            let mut updated = existing.clone();
+            let mut changed = false;
+            if info.avatar_url.is_some() && info.avatar_url != updated.avatar_url {
+                updated.avatar_url = info.avatar_url.clone();
+                changed = true;
+            }
+            if info.name.is_some() && info.name != updated.display_name {
+                updated.display_name = info.name.clone();
+                changed = true;
+            }
+            if changed {
+                let _ = state.store.update_user(&updated).await;
+            }
+            return updated;
         }
     }
 
@@ -451,7 +447,7 @@ fn find_or_create_sso_user(state: &AppState, info: &SsoUserInfo, provider: AuthP
     // Ensure username uniqueness
     let mut final_username = username.clone();
     let mut counter = 1u32;
-    while state.find_user_by_username(&final_username).is_some() {
+    while state.find_user_by_username(&final_username).await.is_some() {
         final_username = format!("{}{}", username, counter);
         counter += 1;
     }
@@ -472,7 +468,7 @@ fn find_or_create_sso_user(state: &AppState, info: &SsoUserInfo, provider: AuthP
         updated_at: Utc::now(),
     };
 
-    state.inner.users.insert(user.id, user.clone());
+    let _ = state.store.create_user(&user).await;
     user
 }
 

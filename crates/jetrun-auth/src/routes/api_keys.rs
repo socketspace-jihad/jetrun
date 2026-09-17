@@ -1,6 +1,6 @@
 use axum::{
     extract::{Extension, Path, State},
-    routing::{delete, get, post},
+    routing::{delete, get},
     Json, Router,
 };
 use chrono::Utc;
@@ -23,13 +23,11 @@ async fn list_api_keys(
     State(state): State<AppState>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Json<Value> {
-    let keys: Vec<Value> = state
-        .inner
-        .api_keys
-        .iter()
-        .filter(|e| e.value().user_id == auth_user.user_id)
-        .map(|e| {
-            let k = e.value();
+    let keys: Vec<Value> = state.store
+        .list_user_keys(auth_user.user_id).await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|k| {
             json!({
                 "id": k.id,
                 "name": k.name,
@@ -74,7 +72,10 @@ async fn create_api_key(
     );
 
     let key_id = api_key.id;
-    state.inner.api_keys.insert(key_id, api_key);
+    if let Err(e) = state.store.create_api_key(&api_key).await {
+        tracing::error!(error = %e, "failed to create API key");
+        return Json(json!({ "error": "Failed to create API key" }));
+    }
 
     // Return the full key ONCE — it cannot be retrieved later
     Json(json!({
@@ -90,13 +91,15 @@ async fn revoke_api_key(
     Extension(auth_user): Extension<AuthUser>,
     Path(key_id): Path<Uuid>,
 ) -> Json<Value> {
-    match state.inner.api_keys.get_mut(&key_id) {
-        Some(mut key) => {
-            if key.user_id != auth_user.user_id {
-                return Json(json!({ "error": "Not your API key" }));
+    // First check if the key belongs to the user by looking it up in their keys
+    let user_keys = state.store.list_user_keys(auth_user.user_id).await.unwrap_or_default();
+
+    match user_keys.iter().find(|k| k.id == key_id) {
+        Some(_) => {
+            match state.store.revoke_key(key_id).await {
+                Ok(true) => Json(json!({ "revoked": true })),
+                _ => Json(json!({ "error": "Failed to revoke API key" })),
             }
-            key.revoked_at = Some(Utc::now());
-            Json(json!({ "revoked": true }))
         }
         None => Json(json!({ "error": "API key not found" })),
     }

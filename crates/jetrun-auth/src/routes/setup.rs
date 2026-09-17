@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use jetrun_common::models::{AuthProvider, Organization, User};
 
-use crate::services::{jwt, password};
+use crate::services::{jwt, password, session};
 use crate::state::AppState;
 
 pub fn routes() -> Router<AppState> {
@@ -24,7 +24,7 @@ pub fn routes() -> Router<AppState> {
 /// Setup is complete when at least one organization exists
 /// (the seeded super admin user doesn't count — an org means someone completed onboarding).
 async fn setup_status(State(state): State<AppState>) -> Json<Value> {
-    let has_orgs = !state.inner.organizations.is_empty();
+    let has_orgs = state.store.has_any_org().await.unwrap_or(false);
 
     Json(json!({
         "setup_completed": has_orgs,
@@ -45,7 +45,7 @@ async fn initial_setup(
     Json(req): Json<SetupRequest>,
 ) -> Result<Json<Value>, StatusCode> {
     // Guard: only works when no org exists (fresh deploy or reset)
-    if !state.inner.organizations.is_empty() {
+    if state.store.has_any_org().await.unwrap_or(false) {
         return Ok(Json(json!({
             "error": "Setup already completed. Use /auth/register or /auth/login instead."
         })));
@@ -83,7 +83,7 @@ async fn initial_setup(
         updated_at: Utc::now(),
     };
     let user_id = user.id;
-    state.inner.users.insert(user_id, user.clone());
+    state.store.create_user(&user).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // 2. Create org
     let org_slug = req.org_name
@@ -101,17 +101,17 @@ async fn initial_setup(
         updated_at: Utc::now(),
     };
     let org_id = org.id;
-    state.inner.organizations.insert(org_id, org.clone());
+    state.store.create_org(&org).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // 3. Assign admin role (not just developer — this is the platform owner)
     let admin_role = state
-        .find_builtin_role("admin")
+        .find_builtin_role("admin").await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    state.add_org_member(org_id, user_id, admin_role.id);
+    state.add_org_member(org_id, user_id, admin_role.id).await;
 
     // 4. Issue tokens
     let auth_user = state
-        .build_auth_user(user_id, Some(org_id))
+        .build_auth_user(user_id, Some(org_id)).await
         .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let access_token = jwt::create_access_token(
@@ -121,12 +121,13 @@ async fn initial_setup(
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let (refresh_token, _) = state.inner.session_store.create_session(
+    let (refresh_token, _) = session::create_session(
+        state.store.as_ref(),
         user_id,
         state.config.jwt_refresh_ttl_days,
         None,
         None,
-    );
+    ).await.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
 
     tracing::info!(
         email = %user.email,

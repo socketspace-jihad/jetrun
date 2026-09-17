@@ -38,7 +38,7 @@ pub async fn auth_middleware(
         }
     } else if let Some(raw_key) = api_key_header {
         // API Key authentication
-        validate_api_key_auth(&state, raw_key)?
+        validate_api_key_auth(&state, raw_key).await?
     } else {
         return Err(StatusCode::UNAUTHORIZED);
     };
@@ -47,7 +47,7 @@ pub async fn auth_middleware(
     Ok(next.run(request).await)
 }
 
-fn validate_api_key_auth(state: &AppState, raw_key: &str) -> Result<AuthUser, StatusCode> {
+async fn validate_api_key_auth(state: &AppState, raw_key: &str) -> Result<AuthUser, StatusCode> {
     // Extract prefix for lookup
     let prefix = if raw_key.len() >= 16 {
         &raw_key[..16]
@@ -56,7 +56,7 @@ fn validate_api_key_auth(state: &AppState, raw_key: &str) -> Result<AuthUser, St
     };
 
     let api_key = state
-        .find_api_key_by_prefix(prefix)
+        .find_api_key_by_prefix(prefix).await
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     if !api_key.is_valid() {
@@ -69,11 +69,10 @@ fn validate_api_key_auth(state: &AppState, raw_key: &str) -> Result<AuthUser, St
     }
 
     // Get the user
-    let user = state
-        .inner
-        .users
-        .get(&api_key.user_id)
-        .map(|u| u.value().clone())
+    let user = state.store
+        .find_user_by_id(api_key.user_id).await
+        .ok()
+        .flatten()
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
     if !user.is_active {

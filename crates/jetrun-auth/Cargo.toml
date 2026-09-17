@@ -20,6 +20,8 @@ sso-apple = ["dep:oauth2", "dep:reqwest"]
 [dependencies]
 mimalloc = { workspace = true }
 jetrun-common = { workspace = true }
+jetrun-store = { workspace = true }
+async-trait = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 axum-extra = { workspace = true }
