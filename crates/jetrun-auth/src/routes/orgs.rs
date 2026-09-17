@@ -197,10 +197,11 @@ async fn invite_member(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    // Find the user by email
-    let target_user = state
-        .find_user_by_email(&req.email).await
-        .ok_or(StatusCode::NOT_FOUND)?;
+    // Find the user by email — they must have an account first
+    let target_user = match state.find_user_by_email(&req.email).await {
+        Some(u) => u,
+        None => return Ok(Json(json!({ "error": "User not found. They must register an account first." }))),
+    };
 
     // Check not already a member
     if state.is_org_member(target_user.id, org_id).await {

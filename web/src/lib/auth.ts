@@ -93,6 +93,24 @@ export const authApi = {
       body: JSON.stringify({ email, role_id: roleId }),
     }),
 
+  // Organizations
+  listMyOrgs: () => authFetch<{ orgs: { id: string; name: string; slug: string; role: string; is_owner: boolean }[] }>("/auth/orgs/me"),
+  switchOrg: (orgId: string) => {
+    const refreshToken = typeof window !== "undefined" ? localStorage.getItem("jetrun_refresh_token") : null;
+    return authFetch<AuthResponse>("/auth/switch-org", {
+      method: "POST",
+      body: JSON.stringify({ org_id: orgId, refresh_token: refreshToken }),
+    });
+  },
+
+  // Roles & Permissions
+  createRole: (data: { name: string; display_name: string; description?: string; permissions: string[] }) =>
+    authFetch<{ id: string; created: boolean }>("/auth/roles", { method: "POST", body: JSON.stringify(data) }),
+  updateRole: (id: string, data: { display_name?: string; description?: string; permissions?: string[] }) =>
+    authFetch<{ updated: boolean }>(`/auth/roles/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteRole: (id: string) =>
+    authFetch<{ deleted: boolean }>(`/auth/roles/${id}`, { method: "DELETE" }),
+
   // Setup (first deploy)
   setupStatus: () =>
     authFetch<{ setup_completed: boolean; has_users: boolean; has_orgs: boolean }>("/auth/setup/status"),
