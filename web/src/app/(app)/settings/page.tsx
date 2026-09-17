@@ -5,51 +5,36 @@ import { Button } from "@/components/ui/button";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatBytes } from "@/lib/utils";
-import { Database, Trash2, Server, Activity } from "lucide-react";
+import { Database, Trash2, Server } from "lucide-react";
 import { DEMO_ENABLED, demoCacheStats, demoServices } from "@/lib/demo";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 export default function SettingsPage() {
   const [cacheStats, setCacheStats] = useState(DEMO_ENABLED ? demoCacheStats : null);
-  const [services, setServices] = useState(DEMO_ENABLED ? demoServices : []);
+  const [services, setServices] = useState<any[]>(DEMO_ENABLED ? demoServices : []);
   const [loading, setLoading] = useState(!DEMO_ENABLED);
   const [purging, setPurging] = useState(false);
 
   useEffect(() => {
     if (DEMO_ENABLED) return;
 
-    // Check service health
     const checkServices = async () => {
-      const svcList = [
-        { name: "gateway", port: 8080 },
-        { name: "engine", port: 9001 },
-        { name: "worker", port: 9002 },
-        { name: "cache", port: 9003 },
-        { name: "auth", port: 9004 },
+      const checks = [
+        { name: "gateway", url: `${API_BASE}/health`, port: 8080 },
+        { name: "auth", url: `${API_BASE}/api/v1/auth/setup/status`, port: 9004 },
       ];
 
       const results = await Promise.all(
-        svcList.map(async (svc) => {
+        checks.map(async (svc) => {
           try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/health`, {
-              signal: AbortSignal.timeout(3000),
-            });
-            return { ...svc, status: res.ok ? "healthy" : "unhealthy", uptime: "—" };
+            const res = await fetch(svc.url, { signal: AbortSignal.timeout(5000) });
+            return { name: svc.name, port: svc.port, status: res.ok ? "healthy" : "unhealthy", uptime: "—" };
           } catch {
-            return { ...svc, status: "unreachable", uptime: "—" };
+            return { name: svc.name, port: svc.port, status: "unreachable", uptime: "—" };
           }
         })
       );
-
-      // Auth service has its own health check
-      try {
-        const authRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:9004"}/health`, {
-          signal: AbortSignal.timeout(3000),
-        });
-        const authIdx = results.findIndex((s) => s.name === "auth");
-        if (authIdx >= 0) {
-          results[authIdx].status = authRes.ok ? "healthy" : "unhealthy";
-        }
-      } catch {}
 
       setServices(results);
       setLoading(false);
@@ -75,10 +60,7 @@ export default function SettingsPage() {
             <CardTitle className="flex items-center gap-2"><Database className="w-4 h-4" />Cache</CardTitle>
             <Button variant="danger" size="sm" disabled={purging} onClick={async () => {
               setPurging(true);
-              try {
-                const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
-                await fetch(`${API}/api/v1/cache`, { method: "DELETE" });
-              } catch {}
+              try { await fetch(`${API_BASE}/api/v1/cache`, { method: "DELETE" }); } catch {}
               setPurging(false);
             }}>
               <Trash2 className="w-3 h-3 mr-1.5" />{purging ? "Purging..." : "Purge"}
@@ -116,7 +98,7 @@ export default function SettingsPage() {
                 </div>
               </>
             ) : (
-              <p className="text-[13px] text-nb-gray text-center py-8">Cache stats not available</p>
+              <p className="text-[13px] text-nb-gray text-center py-8">Cache stats not available yet</p>
             )}
           </CardContent>
         </Card>
