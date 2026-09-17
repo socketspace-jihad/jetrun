@@ -175,7 +175,7 @@ export default function GroupsPage() {
                   className={`cursor-pointer transition-all ${selectedGroup?.id === g.id ? "border-nb-yellow shadow-neo-yellow" : "hover:shadow-neo-lg hover:-translate-y-0.5"}`}
                   onClick={() => handleSelectGroup(g)}>
                   <div className="flex items-start justify-between">
-                    <div>
+                    <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <h3 className="font-black text-[14px]">{g.name}</h3>
                         <span className="text-[11px] text-nb-gray">{g.member_count} members</span>
@@ -185,6 +185,26 @@ export default function GroupsPage() {
                         <div className="mt-2"><Badge variant="info"><Shield className="w-2.5 h-2.5 mr-1" />{g.role.display_name}</Badge></div>
                       ) : (
                         <p className="text-[10px] text-nb-gray mt-2">No role assigned</p>
+                      )}
+                      {/* Member avatars */}
+                      {g.members && g.members.length > 0 && (
+                        <div className="flex items-center mt-3 pt-3 border-t border-nb-light">
+                          <div className="flex -space-x-2">
+                            {g.members.slice(0, 5).map((m: any, i: number) => (
+                              <div key={m.user_id} className="relative" style={{ zIndex: 5 - i }} title={m.display_name || m.username}>
+                                <UserAvatar name={m.display_name || m.username} avatarUrl={m.avatar_url} size="sm" className="ring-2 ring-white" />
+                              </div>
+                            ))}
+                          </div>
+                          {g.members.length > 5 && (
+                            <span className="ml-2 text-[10px] font-bold text-nb-gray">+{g.members.length - 5} more</span>
+                          )}
+                          <div className="ml-auto flex flex-col gap-0.5">
+                            {g.members.slice(0, 3).map((m: any) => (
+                              <span key={m.user_id} className="text-[10px] text-nb-gray truncate max-w-[120px]">{m.display_name || m.username}</span>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
                     <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); handleDelete(g.id); }}>

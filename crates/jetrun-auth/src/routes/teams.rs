@@ -35,14 +35,19 @@ async fn list_groups(
 
     for g in groups {
         let role = state.store.get_group_role(g.id).await.ok().flatten();
-        let member_count = state.store.list_group_members(g.id).await.map(|m| m.len()).unwrap_or(0);
+        let members = state.store.list_group_members(g.id).await.unwrap_or_default();
+        let member_list: Vec<Value> = members.iter().map(|(u, m)| json!({
+            "user_id": u.id, "email": u.email, "username": u.username,
+            "display_name": u.display_name, "avatar_url": u.avatar_url,
+        })).collect();
         result.push(json!({
             "id": g.id,
             "name": g.name,
             "slug": g.slug,
             "description": g.description,
             "role": role.map(|r| json!({ "id": r.id, "name": r.name, "display_name": r.display_name })),
-            "member_count": member_count,
+            "member_count": members.len(),
+            "members": member_list,
             "created_at": g.created_at,
         }));
     }
