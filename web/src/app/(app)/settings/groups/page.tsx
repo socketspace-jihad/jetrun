@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,26 +13,29 @@ import { DEMO_ENABLED } from "@/lib/demo";
 export default function GroupsPage() {
   const [groups, setGroups] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
+  const [orgUsers, setOrgUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState<any>(null);
 
-  // Create form
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newRoleId, setNewRoleId] = useState("");
   const [creating, setCreating] = useState(false);
 
-  // Add member
-  const [addEmail, setAddEmail] = useState("");
+  // Add member with autocomplete
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [adding, setAdding] = useState(false);
   const [memberMsg, setMemberMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   const reload = async () => {
     try {
-      const [g, r] = await Promise.all([authApi.listGroups(), authApi.listRoles()]);
+      const [g, r, u] = await Promise.all([authApi.listGroups(), authApi.listRoles(), authApi.listUsers()]);
       setGroups(g.groups as any);
       setRoles(r.roles as any);
+      setOrgUsers((u.users as any) || []);
     } catch {}
   };
 
@@ -40,6 +43,28 @@ export default function GroupsPage() {
     if (DEMO_ENABLED) { setLoading(false); return; }
     reload().finally(() => setLoading(false));
   }, []);
+
+  // Close suggestions when clicking outside
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  // Filter users for autocomplete — exclude users already in the group
+  const memberIds = new Set((selectedGroup?.members || []).map((m: any) => m.user_id));
+  const filteredUsers = orgUsers.filter((u) => {
+    if (memberIds.has(u.id)) return false;
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return u.email?.toLowerCase().includes(q) ||
+      u.username?.toLowerCase().includes(q) ||
+      (u.display_name || "").toLowerCase().includes(q);
+  });
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
@@ -61,16 +86,18 @@ export default function GroupsPage() {
       const detail = await authApi.getGroup(group.id) as any;
       setSelectedGroup(detail);
       setMemberMsg(null);
+      setSearchQuery("");
     } catch {}
   };
 
-  const handleAddMember = async () => {
-    if (!addEmail.trim() || !selectedGroup) return;
+  const handleAddMember = async (email: string) => {
+    if (!email.trim() || !selectedGroup) return;
     setAdding(true); setMemberMsg(null);
     try {
-      await authApi.addGroupMember(selectedGroup.id, addEmail);
-      setMemberMsg({ type: "success", text: `${addEmail} added!` });
-      setAddEmail("");
+      await authApi.addGroupMember(selectedGroup.id, email);
+      setMemberMsg({ type: "success", text: `Added!` });
+      setSearchQuery("");
+      setShowSuggestions(false);
       await handleSelectGroup(selectedGroup);
     } catch (err) {
       setMemberMsg({ type: "error", text: err instanceof Error ? err.message : "Failed" });
@@ -114,15 +141,10 @@ export default function GroupsPage() {
               </div>
               <div>
                 <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Role</label>
-                <select
-                  value={newRoleId}
-                  onChange={(e) => setNewRoleId(e.target.value)}
-                  className="w-full px-4 py-3 bg-white border-2 border-nb-black rounded-xl text-[13px] font-medium focus:outline-none focus:shadow-neo-yellow focus:border-nb-yellow"
-                >
+                <select value={newRoleId} onChange={(e) => setNewRoleId(e.target.value)}
+                  className="w-full px-4 py-3 bg-white border-2 border-nb-black rounded-xl text-[13px] font-medium focus:outline-none focus:shadow-neo-yellow focus:border-nb-yellow">
                   <option value="">No role (assign later)</option>
-                  {roles.map((r: any) => (
-                    <option key={r.id} value={r.id}>{r.display_name}</option>
-                  ))}
+                  {roles.map((r: any) => <option key={r.id} value={r.id}>{r.display_name}</option>)}
                 </select>
               </div>
             </div>
@@ -149,11 +171,9 @@ export default function GroupsPage() {
           ) : (
             <div className="space-y-3">
               {groups.map((g: any) => (
-                <Card
-                  key={g.id}
+                <Card key={g.id}
                   className={`cursor-pointer transition-all ${selectedGroup?.id === g.id ? "border-nb-yellow shadow-neo-yellow" : "hover:shadow-neo-lg hover:-translate-y-0.5"}`}
-                  onClick={() => handleSelectGroup(g)}
-                >
+                  onClick={() => handleSelectGroup(g)}>
                   <div className="flex items-start justify-between">
                     <div>
                       <div className="flex items-center gap-2">
@@ -161,14 +181,11 @@ export default function GroupsPage() {
                         <span className="text-[11px] text-nb-gray">{g.member_count} members</span>
                       </div>
                       {g.description && <p className="text-[12px] text-nb-gray mt-0.5">{g.description}</p>}
-                      {g.role && (
-                        <div className="mt-2">
-                          <Badge variant="info">
-                            <Shield className="w-2.5 h-2.5 mr-1" />{g.role.display_name}
-                          </Badge>
-                        </div>
+                      {g.role ? (
+                        <div className="mt-2"><Badge variant="info"><Shield className="w-2.5 h-2.5 mr-1" />{g.role.display_name}</Badge></div>
+                      ) : (
+                        <p className="text-[10px] text-nb-gray mt-2">No role assigned</p>
                       )}
-                      {!g.role && <p className="text-[10px] text-nb-gray mt-2">No role assigned</p>}
                     </div>
                     <Button variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); handleDelete(g.id); }}>
                       <Trash2 className="w-3.5 h-3.5 text-nb-red" />
@@ -184,27 +201,21 @@ export default function GroupsPage() {
         <div>
           {selectedGroup ? (
             <Card>
-              <CardTitle className="flex items-center gap-2 mb-2">
-                <Users className="w-4 h-4" />{selectedGroup.name}
-              </CardTitle>
+              <CardTitle className="flex items-center gap-2 mb-2"><Users className="w-4 h-4" />{selectedGroup.name}</CardTitle>
 
               {/* Role selector */}
               <div className="mb-4">
                 <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Group Role</label>
-                <select
-                  value={selectedGroup.role?.id || ""}
+                <select value={selectedGroup.role?.id || ""}
                   onChange={(e) => { if (e.target.value) handleSetRole(selectedGroup.id, e.target.value); }}
-                  className="w-full px-4 py-2.5 bg-white border-2 border-nb-black rounded-xl text-[13px] font-medium focus:outline-none focus:shadow-neo-yellow focus:border-nb-yellow"
-                >
+                  className="w-full px-4 py-2.5 bg-white border-2 border-nb-black rounded-xl text-[13px] font-medium focus:outline-none focus:shadow-neo-yellow focus:border-nb-yellow">
                   <option value="">No role</option>
-                  {roles.map((r: any) => (
-                    <option key={r.id} value={r.id}>{r.display_name}</option>
-                  ))}
+                  {roles.map((r: any) => <option key={r.id} value={r.id}>{r.display_name}</option>)}
                 </select>
                 <p className="text-[10px] text-nb-gray mt-1">All members inherit this role&apos;s permissions</p>
               </div>
 
-              {/* Add member */}
+              {/* Add member — autocomplete search */}
               <div className="mb-4">
                 <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Add Member</label>
                 {memberMsg && (
@@ -212,12 +223,62 @@ export default function GroupsPage() {
                     {memberMsg.text}
                   </div>
                 )}
-                <div className="flex gap-2">
-                  <Input value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="user@email.com" className="flex-1"
-                    onKeyDown={(e) => { if (e.key === "Enter") handleAddMember(); }} />
-                  <Button size="sm" onClick={handleAddMember} disabled={adding || !addEmail.trim()}>
-                    <UserPlus className="w-3.5 h-3.5" />
-                  </Button>
+                <div ref={searchRef} className="relative">
+                  <Input
+                    value={searchQuery}
+                    onChange={(e) => { setSearchQuery(e.target.value); setShowSuggestions(true); setMemberMsg(null); }}
+                    onFocus={() => setShowSuggestions(true)}
+                    placeholder="Search by name or email..."
+                  />
+
+                  {/* Dropdown suggestions */}
+                  {showSuggestions && searchQuery.trim() && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-nb-white border-2 border-nb-black rounded-xl shadow-neo-lg max-h-[240px] overflow-y-auto z-50">
+                      {filteredUsers.length === 0 ? (
+                        <p className="px-4 py-3 text-[12px] text-nb-gray">No users found</p>
+                      ) : (
+                        filteredUsers.slice(0, 8).map((u) => (
+                          <button
+                            key={u.id}
+                            onClick={() => handleAddMember(u.email)}
+                            disabled={adding}
+                            className="flex items-center gap-3 w-full px-4 py-2.5 hover:bg-nb-bg transition-colors text-left"
+                          >
+                            <UserAvatar name={u.display_name || u.username} size="sm" />
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold text-[12px] text-nb-black truncate">{u.display_name || u.username}</p>
+                              <p className="text-[10px] text-nb-gray truncate">{u.email}</p>
+                            </div>
+                            <UserPlus className="w-3.5 h-3.5 text-nb-gray shrink-0" />
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {/* Show all users when focused but no query */}
+                  {showSuggestions && !searchQuery.trim() && filteredUsers.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-nb-white border-2 border-nb-black rounded-xl shadow-neo-lg max-h-[240px] overflow-y-auto z-50">
+                      <p className="px-4 py-2 text-[10px] font-black uppercase tracking-widest text-nb-gray border-b border-nb-light">
+                        Org members ({filteredUsers.length})
+                      </p>
+                      {filteredUsers.slice(0, 8).map((u) => (
+                        <button
+                          key={u.id}
+                          onClick={() => handleAddMember(u.email)}
+                          disabled={adding}
+                          className="flex items-center gap-3 w-full px-4 py-2.5 hover:bg-nb-bg transition-colors text-left"
+                        >
+                          <UserAvatar name={u.display_name || u.username} size="sm" />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-[12px] text-nb-black truncate">{u.display_name || u.username}</p>
+                            <p className="text-[10px] text-nb-gray truncate">{u.email}</p>
+                          </div>
+                          <UserPlus className="w-3.5 h-3.5 text-nb-gray shrink-0" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
