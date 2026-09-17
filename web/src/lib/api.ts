@@ -1,32 +1,42 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("jetrun_token") : null;
+
   const res = await fetch(`${API_BASE}${path}`, {
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
     ...options,
   });
 
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `API error: ${res.status}`);
   }
 
   return res.json();
 }
 
 export const api = {
-  // Pipelines
+  // Projects
+  listProjects: () => fetchApi<{ projects: unknown[] }>("/api/v1/projects"),
+  getProject: (id: string) => fetchApi<Record<string, unknown>>(`/api/v1/projects/${id}`),
+  createProject: (data: { name: string; repo_url: string; branch?: string; config_path?: string; org_id?: string }) =>
+    fetchApi<{ id: string; webhook_url: string; created: boolean }>("/api/v1/projects", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  deleteProject: (id: string) =>
+    fetchApi<{ deleted: boolean }>(`/api/v1/projects/${id}`, { method: "DELETE" }),
+  triggerBuild: (projectId: string) =>
+    fetchApi<{ status: string; message: string }>(`/api/v1/projects/${projectId}/trigger`, { method: "POST" }),
+
+  // Pipelines (legacy — gateway)
   listPipelines: () => fetchApi<{ pipelines: unknown[] }>("/api/v1/pipelines"),
   getPipeline: (id: string) => fetchApi<{ pipeline: unknown }>(`/api/v1/pipelines/${id}`),
-  createPipeline: (config: unknown) =>
-    fetchApi<{ pipeline: unknown }>("/api/v1/pipelines", {
-      method: "POST",
-      body: JSON.stringify(config),
-    }),
-  deletePipeline: (id: string) =>
-    fetchApi(`/api/v1/pipelines/${id}`, { method: "DELETE" }),
 
   // Builds
   listBuilds: () => fetchApi<{ builds: unknown[] }>("/api/v1/builds"),
