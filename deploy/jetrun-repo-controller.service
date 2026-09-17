@@ -1,0 +1,36 @@
+[Unit]
+Description=jetrun Repo Controller (git clone + YAML parse)
+After=network.target postgresql.service nats.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/jetrun
+ExecStart=/opt/jetrun/bin/jetrun-repo-controller
+Restart=on-failure
+RestartSec=3
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+Environment=RUST_LOG=info
+Environment=DATABASE_URL=postgres://jetrun:jetrun_dev@localhost:5432/jetrun
+Environment=NATS_URL=nats://localhost:4222
+Environment=REPOS_DIR=/opt/jetrun/data/repos
+
+# Needs git access + disk for cloning repos
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/jetrun/data
+PrivateTmp=true
+
+LimitNOFILE=65535
+LimitNPROC=4096
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=jetrun-repo-controller
+
+[Install]
+WantedBy=multi-user.target

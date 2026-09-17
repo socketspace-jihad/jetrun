@@ -19,7 +19,7 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 
 # 2. Copy binaries
 echo "[2/6] Installing binaries..."
-for bin in jetrun-gateway jetrun-engine jetrun-worker jetrun-cache jetrun-auth; do
+for bin in jetrun-gateway jetrun-engine jetrun-worker jetrun-cache jetrun-auth jetrun-repo jetrun-repo-controller; do
     if [ -f "target/release/$bin" ]; then
         cp "target/release/$bin" "$BIN_DIR/$bin"
         chmod 755 "$BIN_DIR/$bin"
@@ -48,6 +48,8 @@ cp deploy/jetrun-engine.service /etc/systemd/system/
 cp deploy/jetrun-worker.service /etc/systemd/system/
 cp deploy/jetrun-cache.service /etc/systemd/system/
 cp deploy/jetrun-auth.service /etc/systemd/system/
+cp deploy/jetrun-repo.service /etc/systemd/system/
+cp deploy/jetrun-repo-controller.service /etc/systemd/system/
 cp deploy/jetrun-web.service /etc/systemd/system/
 cp deploy/jetrun.target /etc/systemd/system/
 systemctl daemon-reload
@@ -55,7 +57,7 @@ echo "  Services installed"
 
 # 5. Enable services
 echo "[5/6] Enabling services..."
-systemctl enable jetrun-gateway jetrun-engine jetrun-worker jetrun-cache jetrun-auth jetrun-web jetrun.target
+systemctl enable jetrun-gateway jetrun-engine jetrun-worker jetrun-cache jetrun-auth jetrun-repo jetrun-repo-controller jetrun-web jetrun.target
 
 # 6. Start everything
 echo "[6/6] Starting jetrun..."
