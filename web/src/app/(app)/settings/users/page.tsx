@@ -42,42 +42,34 @@ export default function UsersPage() {
       .catch(() => {});
   }, []);
 
-  const handleInvite = async () => {
-    if (!inviteEmail.trim()) return;
-    setInviting(true);
-    setInviteMsg(null);
-    try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:9004";
-      const token = localStorage.getItem("jetrun_token");
-      const res = await fetch(`${API_BASE}/api/v1/auth/orgs/${getOrgId()}/members`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ email: inviteEmail }),
-      });
-      const data = await res.json();
-      if (data.error) {
-        setInviteMsg({ type: "error", text: data.error });
-      } else {
-        setInviteMsg({ type: "success", text: `${inviteEmail} invited!` });
-        setInviteEmail("");
-        // Reload users
-        const updated = await authApi.listUsers();
-        setUsers(updated.users as any);
-      }
-    } catch (err) {
-      setInviteMsg({ type: "error", text: err instanceof Error ? err.message : "Failed to invite" });
-    }
-    setInviting(false);
-  };
-
-  const getOrgId = () => {
-    // Try to get org_id from the JWT token payload
+  const getOrgId = (): string => {
     const token = localStorage.getItem("jetrun_token");
     if (!token) return "";
     try {
       const payload = JSON.parse(atob(token.split(".")[1]));
       return payload.org_id || "";
     } catch { return ""; }
+  };
+
+  const handleInvite = async () => {
+    if (!inviteEmail.trim()) return;
+    const orgId = getOrgId();
+    if (!orgId) {
+      setInviteMsg({ type: "error", text: "No organization context. Please re-login." });
+      return;
+    }
+    setInviting(true);
+    setInviteMsg(null);
+    try {
+      await authApi.inviteMember(orgId, inviteEmail);
+      setInviteMsg({ type: "success", text: `${inviteEmail} invited!` });
+      setInviteEmail("");
+      const updated = await authApi.listUsers();
+      setUsers(updated.users as any);
+    } catch (err) {
+      setInviteMsg({ type: "error", text: err instanceof Error ? err.message : "Failed to invite" });
+    }
+    setInviting(false);
   };
 
   const filtered = users.filter((u) =>
