@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use jetrun_common::models::{
     ApiKey, Build, BuildStatus, Organization, OrgMember, Permission, Pipeline, Role,
-    RolePermission, Session, User,
+    RolePermission, Session, Team, TeamMember, User,
 };
 
 use crate::error::StoreError;
@@ -99,16 +99,32 @@ pub trait BuildRepo: Send + Sync {
     async fn update_build_status(&self, id: Uuid, status: BuildStatus, finished_at: Option<chrono::DateTime<chrono::Utc>>) -> Result<(), StoreError>;
 }
 
+// ── Group (Team) ──
+
+#[async_trait]
+pub trait GroupRepo: Send + Sync {
+    async fn create_group(&self, group: &Team) -> Result<(), StoreError>;
+    async fn find_group_by_id(&self, id: Uuid) -> Result<Option<Team>, StoreError>;
+    async fn list_groups(&self, org_id: Uuid) -> Result<Vec<Team>, StoreError>;
+    async fn update_group(&self, group: &Team) -> Result<(), StoreError>;
+    async fn delete_group(&self, id: Uuid) -> Result<bool, StoreError>;
+
+    async fn add_group_member(&self, member: &TeamMember) -> Result<(), StoreError>;
+    async fn remove_group_member(&self, team_id: Uuid, user_id: Uuid) -> Result<bool, StoreError>;
+    async fn list_group_members(&self, team_id: Uuid) -> Result<Vec<(User, TeamMember)>, StoreError>;
+
+    async fn set_group_role(&self, team_id: Uuid, role_id: Uuid) -> Result<(), StoreError>;
+    async fn get_group_role(&self, team_id: Uuid) -> Result<Option<Role>, StoreError>;
+}
+
 // ── Combined Store ──
 
-/// All repositories in one object. Each database backend implements this.
 pub trait Store:
-    UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + PipelineRepo + BuildRepo
+    UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + PipelineRepo + BuildRepo + GroupRepo
 {
 }
 
-// Blanket impl: anything that implements all repos is a Store
 impl<T> Store for T where
-    T: UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + PipelineRepo + BuildRepo
+    T: UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + PipelineRepo + BuildRepo + GroupRepo
 {
 }

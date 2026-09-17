@@ -33,6 +33,7 @@ const settingsSubNav = [
   { href: "/settings", icon: Settings, label: "General" },
   { href: "/settings/account", icon: User, label: "Account" },
   { href: "/settings/users", icon: Users, label: "Users" },
+  { href: "/settings/groups", icon: Users, label: "Groups" },
   { href: "/settings/roles", icon: Shield, label: "Roles & Permissions" },
   { href: "/settings/api-keys", icon: Key, label: "API Keys" },
 ];

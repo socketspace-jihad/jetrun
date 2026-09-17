@@ -1,6 +1,7 @@
 mod users;
 mod orgs;
 mod roles;
+mod groups;
 mod sessions;
 mod api_keys;
 mod pipelines;

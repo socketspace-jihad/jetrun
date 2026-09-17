@@ -111,6 +111,19 @@ export const authApi = {
   deleteRole: (id: string) =>
     authFetch<{ deleted: boolean }>(`/auth/roles/${id}`, { method: "DELETE" }),
 
+  // Groups
+  listGroups: () => authFetch<{ groups: unknown[] }>("/auth/groups"),
+  createGroup: (data: { name: string; description?: string; role_id?: string }) =>
+    authFetch<{ id: string; created: boolean }>("/auth/groups", { method: "POST", body: JSON.stringify(data) }),
+  getGroup: (id: string) => authFetch<Record<string, unknown>>(`/auth/groups/${id}`),
+  deleteGroup: (id: string) => authFetch<{ deleted: boolean }>(`/auth/groups/${id}`, { method: "DELETE" }),
+  addGroupMember: (groupId: string, email: string) =>
+    authFetch<{ added: boolean }>(`/auth/groups/${groupId}/members`, { method: "POST", body: JSON.stringify({ email }) }),
+  removeGroupMember: (groupId: string, userId: string) =>
+    authFetch<{ removed: boolean }>(`/auth/groups/${groupId}/members/${userId}`, { method: "DELETE" }),
+  setGroupRole: (groupId: string, roleId: string) =>
+    authFetch<{ updated: boolean }>(`/auth/groups/${groupId}/role`, { method: "PUT", body: JSON.stringify({ role_id: roleId }) }),
+
   // Setup (first deploy)
   setupStatus: () =>
     authFetch<{ setup_completed: boolean; has_users: boolean; has_orgs: boolean }>("/auth/setup/status"),
