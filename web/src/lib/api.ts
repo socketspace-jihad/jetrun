@@ -34,6 +34,14 @@ export const api = {
   triggerBuild: (projectId: string) =>
     fetchApi<{ status: string; message: string }>(`/api/v1/projects/${projectId}/trigger`, { method: "POST" }),
 
+  // Secrets
+  listSecrets: () => fetchApi<{ secrets: unknown[] }>("/api/v1/secrets"),
+  listSecretNames: () => fetchApi<{ secrets: { id: string; name: string; type: string }[] }>("/api/v1/secrets/names"),
+  createSecret: (data: { name: string; secret_type: string; value?: string; generate?: boolean; org_id?: string; created_by?: string }) =>
+    fetchApi<{ id: string; name: string; ssh_public_key?: string; created: boolean }>("/api/v1/secrets", { method: "POST", body: JSON.stringify(data) }),
+  getSecret: (id: string) => fetchApi<Record<string, unknown>>(`/api/v1/secrets/${id}`),
+  deleteSecret: (id: string) => fetchApi<{ deleted: boolean }>(`/api/v1/secrets/${id}`, { method: "DELETE" }),
+
   // Pipelines (legacy — gateway)
   listPipelines: () => fetchApi<{ pipelines: unknown[] }>("/api/v1/pipelines"),
   getPipeline: (id: string) => fetchApi<{ pipeline: unknown }>(`/api/v1/pipelines/${id}`),

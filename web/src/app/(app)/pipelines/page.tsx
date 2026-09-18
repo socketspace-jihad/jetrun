@@ -19,6 +19,8 @@ export default function PipelinesPage() {
   const [name, setName] = useState("");
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("main");
+  const [credentialId, setCredentialId] = useState("");
+  const [secretNames, setSecretNames] = useState<{ id: string; name: string; type: string }[]>([]);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<{ id: string; webhook_url: string } | null>(null);
   const [error, setError] = useState("");
@@ -36,14 +38,23 @@ export default function PipelinesPage() {
     reload().finally(() => setLoading(false));
   }, []);
 
+  // Load secret names when create form opens
+  useEffect(() => {
+    if (showCreate && !DEMO_ENABLED) {
+      api.listSecretNames().then((res) => setSecretNames(res.secrets || [])).catch(() => {});
+    }
+  }, [showCreate]);
+
   const handleCreate = async () => {
     if (!name.trim() || !repoUrl.trim()) return;
     setCreating(true);
     setError("");
     try {
-      const res = await api.createProject({ name, repo_url: repoUrl, branch });
+      const data: any = { name, repo_url: repoUrl, branch };
+      if (credentialId) data.credential_id = credentialId;
+      const res = await api.createProject(data);
       setCreated(res);
-      setName(""); setRepoUrl(""); setBranch("main");
+      setName(""); setRepoUrl(""); setBranch("main"); setCredentialId("");
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create project");
@@ -119,7 +130,23 @@ export default function PipelinesPage() {
               placeholder="https://github.com/user/repo.git"
               onKeyDown={(e) => { if (e.key === "Enter" && name.trim() && repoUrl.trim()) handleCreate(); }}
             />
-            <p className="text-[10px] text-nb-gray mt-1">HTTPS clone URL. Place <code className="bg-nb-bg px-1 rounded">.jetrun/pipeline.yaml</code> in your repo root.</p>
+            <p className="text-[10px] text-nb-gray mt-1">HTTPS or SSH clone URL. Place <code className="bg-nb-bg px-1 rounded">.jetrun/pipeline.yaml</code> in your repo root.</p>
+          </div>
+          <div className="mb-4">
+            <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Credential</label>
+            <select
+              value={credentialId}
+              onChange={(e) => setCredentialId(e.target.value)}
+              className="w-full px-4 py-3 bg-white border-2 border-nb-black rounded-xl text-[13px] font-medium focus:outline-none focus:shadow-neo-yellow focus:border-nb-yellow"
+            >
+              <option value="">None (public repository)</option>
+              {secretNames.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name} ({s.type === "ssh_key" ? "SSH Key" : s.type === "token" ? "Token" : "Password"})
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] text-nb-gray mt-1">For private repos. Manage secrets in Settings → Secrets.</p>
           </div>
           <div className="flex justify-end">
             <Button onClick={handleCreate} disabled={creating || !name.trim() || !repoUrl.trim()}>
