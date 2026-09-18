@@ -121,15 +121,30 @@ async fn create_secret(
         }
     };
 
+    let org_id = match req.org_id {
+        Some(id) if id != Uuid::nil() => id,
+        _ => {
+            tracing::warn!(org_id = ?req.org_id, created_by = ?req.created_by, "missing org_id in create secret request");
+            return Json(json!({ "error": "org_id is required. Please re-login and try again." }));
+        }
+    };
+
+    let created_by = match req.created_by {
+        Some(id) if id != Uuid::nil() => id,
+        _ => {
+            return Json(json!({ "error": "created_by (user_id) is required. Please re-login." }));
+        }
+    };
+
     let secret = Secret {
         id: Uuid::new_v4(),
-        org_id: req.org_id.unwrap_or(Uuid::nil()),
+        org_id,
         name: req.name.clone(),
         description: req.description,
         secret_type,
         encrypted_value,
         ssh_public_key: ssh_public_key.clone(),
-        created_by: req.created_by.unwrap_or(Uuid::nil()),
+        created_by,
         created_at: Utc::now(),
         updated_at: Utc::now(),
     };
