@@ -20,6 +20,13 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+function getOrgIdFromToken(): string {
+  if (typeof window === "undefined") return "";
+  const token = localStorage.getItem("jetrun_token");
+  if (!token) return "";
+  try { return JSON.parse(atob(token.split(".")[1])).org_id || ""; } catch { return ""; }
+}
+
 export const api = {
   // Projects
   listProjects: () => fetchApi<{ projects: unknown[] }>("/api/v1/projects"),
@@ -35,8 +42,8 @@ export const api = {
     fetchApi<{ status: string; message: string }>(`/api/v1/projects/${projectId}/trigger`, { method: "POST" }),
 
   // Secrets
-  listSecrets: () => fetchApi<{ secrets: unknown[] }>("/api/v1/secrets"),
-  listSecretNames: () => fetchApi<{ secrets: { id: string; name: string; type: string }[] }>("/api/v1/secrets/names"),
+  listSecrets: () => fetchApi<{ secrets: unknown[] }>(`/api/v1/secrets?org_id=${getOrgIdFromToken()}`),
+  listSecretNames: () => fetchApi<{ secrets: { id: string; name: string; type: string }[] }>(`/api/v1/secrets/names?org_id=${getOrgIdFromToken()}`),
   createSecret: (data: { name: string; secret_type: string; value?: string; generate?: boolean; org_id?: string; created_by?: string }) =>
     fetchApi<{ id: string; name: string; ssh_public_key?: string; created: boolean }>("/api/v1/secrets", { method: "POST", body: JSON.stringify(data) }),
   getSecret: (id: string) => fetchApi<Record<string, unknown>>(`/api/v1/secrets/${id}`),

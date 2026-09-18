@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -12,6 +12,11 @@ use jetrun_common::models::{Secret, SecretType};
 
 use super::AppState;
 use crate::crypto;
+
+#[derive(Debug, Deserialize)]
+struct OrgQuery {
+    org_id: Option<Uuid>,
+}
 
 pub fn admin_routes() -> Router<AppState> {
     Router::new()
@@ -27,9 +32,14 @@ pub fn names_route() -> Router<AppState> {
 
 // ── Admin endpoints ──
 
-async fn list_secrets(State(state): State<AppState>) -> Json<Value> {
-    // TODO: get org_id from auth context. For now list all.
-    let secrets = state.store.list_secrets_by_org(Uuid::nil()).await.unwrap_or_default();
+async fn list_secrets(State(state): State<AppState>, Query(q): Query<OrgQuery>) -> Json<Value> {
+    let org_id = q.org_id.unwrap_or(Uuid::nil());
+    let secrets = if org_id == Uuid::nil() {
+        // No org filter — list all (admin view)
+        state.store.list_secrets_by_org(org_id).await.unwrap_or_default()
+    } else {
+        state.store.list_secrets_by_org(org_id).await.unwrap_or_default()
+    };
 
     let list: Vec<Value> = secrets.into_iter().map(|s| json!({
         "id": s.id,
@@ -184,9 +194,9 @@ async fn delete_secret(State(state): State<AppState>, Path(id): Path<Uuid>) -> J
 
 // ── Developer endpoint (names only for dropdown) ──
 
-async fn list_secret_names(State(state): State<AppState>) -> Json<Value> {
-    // TODO: get org_id from auth context
-    let names = state.store.list_secret_names_by_org(Uuid::nil()).await.unwrap_or_default();
+async fn list_secret_names(State(state): State<AppState>, Query(q): Query<OrgQuery>) -> Json<Value> {
+    let org_id = q.org_id.unwrap_or(Uuid::nil());
+    let names = state.store.list_secret_names_by_org(org_id).await.unwrap_or_default();
 
     let list: Vec<Value> = names.into_iter().map(|(id, name, secret_type)| json!({
         "id": id,

@@ -36,12 +36,19 @@ export default function SecretsPage() {
     reload().finally(() => setLoading(false));
   }, []);
 
+  const getTokenData = () => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("jetrun_token") : null;
+    if (!token) return "";
+    try { const p = JSON.parse(atob(token.split(".")[1])); return p.org_id || ""; } catch { return ""; }
+  };
+
   const handleCreate = async () => {
     if (!name.trim()) return;
     setCreating(true);
     setError("");
     try {
-      const data: any = { name, secret_type: secretType };
+      const { org_id: orgId, user_id: userId } = getTokenData();
+      const data: any = { name, secret_type: secretType, org_id: orgId || undefined, created_by: userId || undefined };
 
       if (secretType === "ssh_key") {
         if (sshMode === "generate") {
