@@ -206,7 +206,7 @@ export default function SecretsPage() {
             )}
 
             <div className="flex justify-end">
-              <Button onClick={handleCreate} disabled={creating || !name.trim()}>
+              <Button onClick={handleCreate} disabled={creating || !name.trim() || (secretType !== "ssh_key" && !value.trim()) || (secretType === "ssh_key" && sshMode === "upload" && !value.trim())}>
                 {creating ? "Creating..." : secretType === "ssh_key" && sshMode === "generate" ? "Generate Key" : "Save Secret"}
               </Button>
             </div>
