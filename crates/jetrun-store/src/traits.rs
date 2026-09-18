@@ -79,6 +79,18 @@ pub trait ApiKeyRepo: Send + Sync {
     async fn list_user_keys(&self, user_id: Uuid) -> Result<Vec<ApiKey>, StoreError>;
 }
 
+// ── Secret ──
+
+#[async_trait]
+pub trait SecretRepo: Send + Sync {
+    async fn create_secret(&self, secret: &jetrun_common::models::Secret) -> Result<(), StoreError>;
+    async fn find_secret_by_id(&self, id: Uuid) -> Result<Option<jetrun_common::models::Secret>, StoreError>;
+    async fn list_secrets_by_org(&self, org_id: Uuid) -> Result<Vec<jetrun_common::models::Secret>, StoreError>;
+    async fn delete_secret(&self, id: Uuid) -> Result<bool, StoreError>;
+    /// Returns only id, name, type — for developer dropdown (no encrypted values)
+    async fn list_secret_names_by_org(&self, org_id: Uuid) -> Result<Vec<(Uuid, String, String)>, StoreError>;
+}
+
 // ── Project ──
 
 #[async_trait]
@@ -132,11 +144,11 @@ pub trait GroupRepo: Send + Sync {
 // ── Combined Store ──
 
 pub trait Store:
-    UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + ProjectRepo + PipelineRepo + BuildRepo + GroupRepo
+    UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + SecretRepo + ProjectRepo + PipelineRepo + BuildRepo + GroupRepo
 {
 }
 
 impl<T> Store for T where
-    T: UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + ProjectRepo + PipelineRepo + BuildRepo + GroupRepo
+    T: UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + SecretRepo + ProjectRepo + PipelineRepo + BuildRepo + GroupRepo
 {
 }

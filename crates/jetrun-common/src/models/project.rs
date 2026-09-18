@@ -12,6 +12,7 @@ pub struct Project {
     pub default_branch: String,
     pub webhook_secret: Option<String>,
     pub config_path: String,
+    pub credential_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

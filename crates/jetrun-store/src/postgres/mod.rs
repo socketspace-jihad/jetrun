@@ -5,6 +5,7 @@ mod groups;
 mod sessions;
 mod projects;
 mod api_keys;
+mod secrets;
 mod pipelines;
 mod builds;
 

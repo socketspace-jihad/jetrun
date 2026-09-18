@@ -21,11 +21,17 @@ pub struct AppState {
     pub broker: Arc<dyn MessageBroker>,
 }
 
+pub mod secrets;
+
 pub fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{id}", get(get_project).delete(delete_project))
         .route("/projects/{id}/trigger", post(trigger_build))
+        // Secrets — admin management
+        .nest("/secrets", secrets::admin_routes())
+        // Secrets — developer dropdown (names only)
+        .nest("/secrets", secrets::names_route())
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +43,7 @@ struct CreateProjectRequest {
     #[serde(default = "default_config_path")]
     config_path: String,
     org_id: Option<Uuid>,
+    credential_id: Option<Uuid>,
 }
 
 fn default_branch() -> String { "main".into() }
@@ -55,6 +62,7 @@ async fn create_project(
         default_branch: req.branch.clone(),
         webhook_secret: None,
         config_path: req.config_path,
+        credential_id: req.credential_id,
         created_at: Utc::now(),
         updated_at: Utc::now(),
     };

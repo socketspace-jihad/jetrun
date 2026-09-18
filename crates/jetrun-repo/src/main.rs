@@ -9,6 +9,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
+pub mod crypto;
 mod routes;
 
 #[tokio::main]
