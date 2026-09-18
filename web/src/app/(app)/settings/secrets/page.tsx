@@ -36,11 +36,21 @@ export default function SecretsPage() {
     reload().finally(() => setLoading(false));
   }, []);
 
-  const getTokenData = () => {
+  const getTokenData = (): { org_id: string; user_id: string } => {
     const token = typeof window !== "undefined" ? localStorage.getItem("jetrun_token") : null;
-    if (!token) return "";
-    try { const p = JSON.parse(atob(token.split(".")[1])); return p.org_id || ""; } catch { return ""; }
+    if (!token) return { org_id: "", user_id: "" };
+    try {
+      const p = JSON.parse(atob(token.split(".")[1]));
+      return { org_id: p.org_id || "", user_id: p.sub || "" };
+    } catch {
+      return { org_id: "", user_id: "" };
+    }
   };
+
+
+
+
+
 
   const handleCreate = async () => {
     if (!name.trim()) return;
