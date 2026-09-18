@@ -5,7 +5,7 @@ import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Lock, Plus, Trash2, X, Copy, Check, Key, KeyRound } from "lucide-react";
+import { Lock, Plus, Trash2, X, Copy, Check, KeyRound } from "lucide-react";
 import { api } from "@/lib/api";
 import { DEMO_ENABLED } from "@/lib/demo";
 
@@ -16,11 +16,11 @@ export default function SecretsPage() {
 
   const [name, setName] = useState("");
   const [secretType, setSecretType] = useState("ssh_key");
+  const [sshMode, setSshMode] = useState<"generate" | "upload">("generate");
   const [value, setValue] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
-  // Created SSH key display
   const [createdKey, setCreatedKey] = useState<{ name: string; public_key: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -42,17 +42,24 @@ export default function SecretsPage() {
     setError("");
     try {
       const data: any = { name, secret_type: secretType };
+
       if (secretType === "ssh_key") {
-        data.generate = true;
+        if (sshMode === "generate") {
+          data.generate = true;
+        } else {
+          if (!value.trim()) { setError("Paste your private key"); setCreating(false); return; }
+          data.value = value;
+        }
       } else {
-        if (!value.trim()) { setError("Value is required for token/password"); setCreating(false); return; }
+        if (!value.trim()) { setError("Value is required"); setCreating(false); return; }
         data.value = value;
       }
+
       const res = await api.createSecret(data);
       if (res.ssh_public_key) {
         setCreatedKey({ name, public_key: res.ssh_public_key });
       }
-      setName(""); setValue(""); setShowCreate(false);
+      setName(""); setValue(""); setSshMode("generate"); setShowCreate(false);
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create secret");
@@ -74,8 +81,8 @@ export default function SecretsPage() {
     switch (t) { case "ssh_key": return "SSH Key"; case "token": return "Token"; case "password": return "Password"; default: return t; }
   };
 
-  const typeBadge = (t: string) => {
-    switch (t) { case "ssh_key": return "info"; case "token": return "warning"; case "password": return "muted"; default: return "default" as const; }
+  const typeBadge = (t: string): "info" | "warning" | "muted" | "default" => {
+    switch (t) { case "ssh_key": return "info"; case "token": return "warning"; case "password": return "muted"; default: return "default"; }
   };
 
   return (
@@ -125,15 +132,64 @@ export default function SecretsPage() {
               </div>
               <div>
                 <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Type</label>
-                <select value={secretType} onChange={(e) => setSecretType(e.target.value)}
+                <select value={secretType} onChange={(e) => { setSecretType(e.target.value); setValue(""); }}
                   className="w-full px-4 py-3 bg-white border-2 border-nb-black rounded-xl text-[13px] font-medium focus:outline-none focus:shadow-neo-yellow focus:border-nb-yellow">
-                  <option value="ssh_key">SSH Deploy Key (auto-generate)</option>
+                  <option value="ssh_key">SSH Deploy Key</option>
                   <option value="token">Personal Access Token</option>
                   <option value="password">Password / Secret</option>
                 </select>
               </div>
             </div>
 
+            {/* SSH Key: choose generate or upload */}
+            {secretType === "ssh_key" && (
+              <div className="mb-4">
+                <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">SSH Key Source</label>
+                <div className="flex gap-2 mb-3">
+                  <button
+                    onClick={() => { setSshMode("generate"); setValue(""); }}
+                    className={`flex-1 px-4 py-2.5 rounded-xl text-[12px] font-bold border-2 transition-all ${
+                      sshMode === "generate"
+                        ? "bg-nb-yellow/15 border-nb-yellow text-nb-black"
+                        : "bg-nb-bg border-nb-light text-nb-gray hover:border-nb-black"
+                    }`}
+                  >
+                    Auto-Generate
+                  </button>
+                  <button
+                    onClick={() => setSshMode("upload")}
+                    className={`flex-1 px-4 py-2.5 rounded-xl text-[12px] font-bold border-2 transition-all ${
+                      sshMode === "upload"
+                        ? "bg-nb-yellow/15 border-nb-yellow text-nb-black"
+                        : "bg-nb-bg border-nb-light text-nb-gray hover:border-nb-black"
+                    }`}
+                  >
+                    Use Existing Key
+                  </button>
+                </div>
+
+                {sshMode === "generate" ? (
+                  <div className="bg-nb-bg border border-nb-light rounded-xl px-4 py-3">
+                    <p className="text-[12px] text-nb-black font-bold mb-1">Auto-Generate Ed25519 Key</p>
+                    <p className="text-[11px] text-nb-gray">A new SSH keypair will be generated. The public key will be shown once — add it as a Deploy Key in your repo.</p>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">Private Key</label>
+                    <textarea
+                      value={value}
+                      onChange={(e) => setValue(e.target.value)}
+                      placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"}
+                      rows={6}
+                      className="w-full px-4 py-3 bg-white border-2 border-nb-black rounded-xl text-[12px] font-mono text-nb-black placeholder:text-nb-gray focus:outline-none focus:shadow-neo-yellow focus:border-nb-yellow resize-none"
+                    />
+                    <p className="text-[10px] text-nb-gray mt-1">Paste your existing private key. It will be encrypted at rest and never displayed again.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Token / Password input */}
             {secretType !== "ssh_key" && (
               <div className="mb-4">
                 <label className="block text-[10px] font-black uppercase tracking-widest text-nb-gray mb-2">
@@ -149,16 +205,9 @@ export default function SecretsPage() {
               </div>
             )}
 
-            {secretType === "ssh_key" && (
-              <div className="bg-nb-bg border border-nb-light rounded-xl px-4 py-3 mb-4">
-                <p className="text-[12px] text-nb-black font-bold mb-1">Auto-Generate Ed25519 Key</p>
-                <p className="text-[11px] text-nb-gray">A new SSH keypair will be generated. The public key will be shown once — add it as a Deploy Key in your repo. The private key is encrypted and stored securely.</p>
-              </div>
-            )}
-
             <div className="flex justify-end">
               <Button onClick={handleCreate} disabled={creating || !name.trim()}>
-                {creating ? "Creating..." : secretType === "ssh_key" ? "Generate Key" : "Save Secret"}
+                {creating ? "Creating..." : secretType === "ssh_key" && sshMode === "generate" ? "Generate Key" : "Save Secret"}
               </Button>
             </div>
           </CardContent>
@@ -184,11 +233,10 @@ export default function SecretsPage() {
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="font-black text-[14px]">{s.name}</h3>
-                    <Badge variant={typeBadge(s.secret_type) as any}>{typeLabel(s.secret_type)}</Badge>
+                    <Badge variant={typeBadge(s.secret_type)}>{typeLabel(s.secret_type)}</Badge>
                   </div>
                   {s.description && <p className="text-[12px] text-nb-gray">{s.description}</p>}
 
-                  {/* SSH public key display */}
                   {s.ssh_public_key && (
                     <div className="mt-2 flex items-center gap-2">
                       <code className="font-mono text-[10px] bg-nb-bg px-3 py-1.5 rounded-lg text-nb-gray truncate max-w-[500px]">{s.ssh_public_key}</code>
