@@ -30,7 +30,7 @@ pub struct AppStateInner {
 
 impl AppState {
     pub fn new() -> Self {
-        let webhook_secret = std::env::var("WEBHOOK_SECRET").ok();
+        let webhook_secret = std::env::var("WEBHOOK_SECRET").ok().filter(|s| !s.is_empty());
 
         Self {
             inner: Arc::new(AppStateInner {

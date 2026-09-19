@@ -28,11 +28,17 @@ async fn handle_github_webhook(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("unknown");
 
+    // Handle ping immediately — no auth needed
+    if event_type == "ping" {
+        tracing::info!("github webhook ping received");
+        return Ok(Json(json!({ "status": "pong" })));
+    }
+
+    // Verify signature if a webhook secret is configured
     let signature = headers
         .get("X-Hub-Signature-256")
         .and_then(|v| v.to_str().ok());
 
-    // Verify signature if a webhook secret is configured
     if let Some(secret) = &state.webhook_secret() {
         let sig = signature.ok_or_else(|| {
             tracing::warn!("github webhook missing X-Hub-Signature-256 header");
@@ -49,10 +55,6 @@ async fn handle_github_webhook(
     let event = match event_type {
         "push" => parse_push_event(&body)?,
         "pull_request" => parse_pull_request_event(&body)?,
-        "ping" => {
-            tracing::info!("github webhook ping received");
-            return Ok(Json(json!({ "status": "pong" })));
-        }
         other => {
             tracing::debug!(event = other, "ignoring unhandled github event type");
             return Ok(Json(json!({ "status": "ignored", "event": other })));
