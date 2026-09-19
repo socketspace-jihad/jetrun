@@ -1,0 +1,38 @@
+name: "Go Build & Test"
+description: "CI pipeline for Go applications"
+
+on:
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CGO_ENABLED: "0"
+  GOFLAGS: "-trimpath"
+
+stages:
+  - name: lint
+    steps:
+      - name: Go vet
+        run: go vet ./...
+
+  - name: test
+    depends_on: [lint]
+    steps:
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out ./...
+        cache:
+          key: "go-mod-{{ hashFiles('go.sum') }}"
+          paths: ["~/go/pkg/mod"]
+          restore_keys: ["go-mod-"]
+
+  - name: build
+    depends_on: [test]
+    steps:
+      - name: Build binary
+        run: go build -ldflags="-s -w" -o bin/app .
+        artifacts:
+          name: go-binary
+          paths: ["bin/app"]
+          retention_days: 7

@@ -22,16 +22,18 @@ pub struct AppState {
 }
 
 pub mod secrets;
+pub mod webhooks;
 
 pub fn api_routes() -> Router<AppState> {
     Router::new()
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{id}", get(get_project).delete(delete_project))
         .route("/projects/{id}/trigger", post(trigger_build))
-        // Secrets — admin management
+        // Secrets
         .nest("/secrets", secrets::admin_routes())
-        // Secrets — developer dropdown (names only)
         .nest("/secrets", secrets::names_route())
+        // Webhooks (GitHub/GitLab/Bitbucket → trigger sync)
+        .nest("/webhooks", webhooks::routes())
 }
 
 #[derive(Debug, Deserialize)]
