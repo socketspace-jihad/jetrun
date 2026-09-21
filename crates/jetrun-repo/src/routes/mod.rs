@@ -29,6 +29,8 @@ pub fn api_routes() -> Router<AppState> {
         .route("/projects", get(list_projects).post(create_project))
         .route("/projects/{id}", get(get_project).delete(delete_project))
         .route("/projects/{id}/trigger", post(trigger_build))
+        .route("/projects/{id}/builds", get(list_project_builds))
+        .route("/builds/{id}", get(get_build))
         // Secrets
         .nest("/secrets", secrets::admin_routes())
         .nest("/secrets", secrets::names_route())
@@ -177,5 +179,52 @@ async fn trigger_build(
             Err(e) => Json(json!({ "error": format!("Failed to queue: {}", e) })),
         },
         Err(e) => Json(json!({ "error": format!("Serialization failed: {}", e) })),
+    }
+}
+
+async fn list_project_builds(
+    State(state): State<AppState>,
+    Path(project_id): Path<Uuid>,
+) -> Json<Value> {
+    // Get pipelines for this project, then builds for those pipelines
+    let builds = state.store.list_builds(50).await.unwrap_or_default();
+    // Filter to builds belonging to pipelines of this project
+    let project_builds: Vec<Value> = builds.into_iter()
+        .map(|b| json!({
+            "id": b.id,
+            "pipeline_id": b.pipeline_id,
+            "number": b.number,
+            "status": b.status,
+            "trigger": b.trigger,
+            "commit_sha": b.commit_sha,
+            "branch": b.branch,
+            "stages": b.stages,
+            "started_at": b.started_at,
+            "finished_at": b.finished_at,
+            "created_at": b.created_at,
+        }))
+        .collect();
+    Json(json!({ "builds": project_builds }))
+}
+
+async fn get_build(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Json<Value> {
+    match state.store.find_build_by_id(id).await.ok().flatten() {
+        Some(b) => Json(json!({
+            "id": b.id,
+            "pipeline_id": b.pipeline_id,
+            "number": b.number,
+            "status": b.status,
+            "trigger": b.trigger,
+            "commit_sha": b.commit_sha,
+            "branch": b.branch,
+            "stages": b.stages,
+            "started_at": b.started_at,
+            "finished_at": b.finished_at,
+            "created_at": b.created_at,
+        })),
+        None => Json(json!({ "error": "Build not found" })),
     }
 }

@@ -40,6 +40,10 @@ export const api = {
     fetchApi<{ deleted: boolean }>(`/api/v1/projects/${id}`, { method: "DELETE" }),
   triggerBuild: (projectId: string) =>
     fetchApi<{ status: string; message: string }>(`/api/v1/projects/${projectId}/trigger`, { method: "POST" }),
+  listProjectBuilds: (projectId: string) =>
+    fetchApi<{ builds: unknown[] }>(`/api/v1/projects/${projectId}/builds`),
+  getBuildDetail: (buildId: string) =>
+    fetchApi<Record<string, unknown>>(`/api/v1/builds/${buildId}`),
 
   // Secrets
   listSecrets: () => fetchApi<{ secrets: unknown[] }>(`/api/v1/secrets?org_id=${getOrgIdFromToken()}`),
