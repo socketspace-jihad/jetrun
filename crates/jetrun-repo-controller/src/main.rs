@@ -123,57 +123,101 @@ async fn process_sync(
     commit_sha: Option<&str>,
     trigger: &str,
 ) -> anyhow::Result<()> {
+    use jetrun_common::models::*;
+
     let repo_path = repos_dir.join(project_id.to_string());
+    let now = chrono::Utc::now();
 
     // 1. Clone or pull
-    if repo_path.exists() {
-        git::pull(&repo_path, branch).await?;
-    } else {
-        git::clone(repo_url, branch, &repo_path).await?;
+    match repo_path.exists() {
+        true => git::pull(&repo_path, branch).await?,
+        false => git::clone(repo_url, branch, &repo_path).await?,
     }
 
-    // 2. Read .jetrun/pipeline.yaml
+    // 2. Read + parse pipeline config
     let config_path = repo_path.join(".jetrun/pipeline.yaml");
-    if !config_path.exists() {
-        anyhow::bail!(".jetrun/pipeline.yaml not found in repo");
-    }
+    anyhow::ensure!(config_path.exists(), ".jetrun/pipeline.yaml not found in repo");
 
-    let yaml_content = tokio::fs::read_to_string(&config_path).await?;
+    let config: PipelineConfig = serde_yaml::from_str(
+        &tokio::fs::read_to_string(&config_path).await?
+    )?;
 
-    // 3. Parse YAML
-    let config: PipelineConfig = serde_yaml::from_str(&yaml_content)?;
+    tracing::info!(pipeline = %config.name, stages = config.stages.len(), "pipeline parsed");
 
-    tracing::info!(
-        pipeline = %config.name,
-        stages = config.stages.len(),
-        "pipeline config parsed"
-    );
+    // 3. Upsert pipeline record (one pipeline per project)
+    // Deterministic pipeline ID from project_id + name (stable across syncs)
+    let hash = blake3::hash(format!("{}:{}", project_id, config.name).as_bytes());
+    let mut id_bytes = [0u8; 16];
+    id_bytes.copy_from_slice(&hash.as_bytes()[..16]);
+    let pipeline_id = uuid::Uuid::from_bytes(id_bytes);
+    let pipeline = Pipeline {
+        id: pipeline_id,
+        project_id,
+        name: config.name.clone(),
+        description: config.description.clone(),
+        config_path: ".jetrun/pipeline.yaml".into(),
+        config: config.clone(),
+        active: true,
+        created_at: now,
+        updated_at: now,
+    };
+
+    // Create or ignore if already exists
+    let _ = store.create_pipeline(&pipeline).await;
 
     // 4. Create build record
-    let build = jetrun_common::models::Build {
-        id: uuid::Uuid::new_v4(),
-        pipeline_id: project_id, // using project_id as pipeline_id for now
-        number: 1, // TODO: auto-increment per pipeline
-        status: jetrun_common::models::BuildStatus::Queued,
-        trigger: match trigger {
-            "push" => jetrun_common::models::BuildTrigger::Push,
-            "pull_request" => jetrun_common::models::BuildTrigger::PullRequest,
-            "webhook" => jetrun_common::models::BuildTrigger::Webhook,
-            _ => jetrun_common::models::BuildTrigger::Manual,
-        },
+    let build_trigger = match trigger {
+        "push" => BuildTrigger::Push,
+        "pull_request" => BuildTrigger::PullRequest,
+        "webhook" => BuildTrigger::Webhook,
+        _ => BuildTrigger::Manual,
+    };
+
+    // Build stages from pipeline config
+    let build_id = uuid::Uuid::new_v4();
+    let stages: Vec<BuildStage> = config.stages.iter().map(|s| {
+        let stage_id = uuid::Uuid::new_v4();
+        BuildStage {
+            id: stage_id,
+            build_id,
+            name: s.name.clone(),
+            status: BuildStatus::Queued,
+            steps: s.steps.iter().map(|step| BuildStep {
+                id: uuid::Uuid::new_v4(),
+                stage_id,
+                name: step.name.clone(),
+                status: BuildStatus::Queued,
+                exit_code: None,
+                log_url: None,
+                started_at: None,
+                finished_at: None,
+                duration_ms: None,
+                cache_hit: false,
+                fingerprint: None,
+            }).collect(),
+            started_at: None,
+            finished_at: None,
+        }
+    }).collect();
+
+    let build = Build {
+        id: build_id,
+        pipeline_id,
+        number: now.timestamp_millis() as u64, // monotonic enough for now
+        status: BuildStatus::Queued,
+        trigger: build_trigger,
         commit_sha: commit_sha.map(String::from),
         branch: Some(branch.to_string()),
         matrix_values: None,
-        stages: vec![],
+        stages,
         started_at: None,
         finished_at: None,
-        created_at: chrono::Utc::now(),
+        created_at: now,
     };
 
     store.create_build(&build).await
-        .map_err(|e| anyhow::anyhow!("failed to create build: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("create build: {}", e))?;
 
-    tracing::info!(build_id = %build.id, "build created");
-
+    tracing::info!(build_id = %build_id, pipeline = %config.name, "build created");
     Ok(())
 }
