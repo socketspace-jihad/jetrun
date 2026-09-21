@@ -27,3 +27,5 @@ rand = { workspace = true }
 base64 = { workspace = true }
 blake3 = { workspace = true }
 tempfile = "3"
+aws-sdk-s3 = { workspace = true }
+aws-config = { workspace = true }

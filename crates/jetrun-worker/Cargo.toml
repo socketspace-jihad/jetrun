@@ -28,6 +28,8 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 futures = { workspace = true }
 libc = { workspace = true }
+aws-sdk-s3 = { workspace = true }
+aws-config = { workspace = true }
 
 # Docker executor (optional)
 bollard = { version = "0.18", optional = true }

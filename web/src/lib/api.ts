@@ -44,6 +44,8 @@ export const api = {
     fetchApi<{ builds: unknown[] }>(`/api/v1/projects/${projectId}/builds`),
   getBuildDetail: (buildId: string) =>
     fetchApi<Record<string, unknown>>(`/api/v1/builds/${buildId}`),
+  getBuildLogs: (buildId: string) =>
+    fetchApi<{ build_id: string; source: string; status: string; content: string }>(`/api/v1/builds/${buildId}/logs`),
 
   // Secrets
   listSecrets: () => fetchApi<{ secrets: unknown[] }>(`/api/v1/secrets?org_id=${getOrgIdFromToken()}`),

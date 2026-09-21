@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
@@ -12,13 +13,59 @@ use uuid::Uuid;
 
 use jetrun_broker::traits::MessageBroker;
 use jetrun_broker::types::RepoJob;
-use jetrun_common::models::Project;
+use jetrun_common::models::{BuildStatus, Project};
 use jetrun_store::traits::Store;
 
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<dyn Store>,
     pub broker: Arc<dyn MessageBroker>,
+    pub log_store: Option<Arc<LogStoreClient>>,
+    pub log_dir: PathBuf,
+}
+
+/// Lightweight S3 client for reading build logs
+pub struct LogStoreClient {
+    client: aws_sdk_s3::Client,
+    bucket: String,
+}
+
+impl LogStoreClient {
+    pub async fn from_env() -> anyhow::Result<Self> {
+        let endpoint = std::env::var("S3_ENDPOINT").ok();
+        let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "jetrun-logs".into());
+        let region = std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".into());
+
+        let mut config_loader = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .region(aws_config::Region::new(region));
+
+        if let Some(ep) = &endpoint {
+            config_loader = config_loader.endpoint_url(ep);
+        }
+
+        let config = config_loader.load().await;
+        let mut s3_config = aws_sdk_s3::config::Builder::from(&config);
+        if endpoint.is_some() {
+            s3_config = s3_config.force_path_style(true);
+        }
+
+        let client = aws_sdk_s3::Client::from_conf(s3_config.build());
+        Ok(Self { client, bucket })
+    }
+
+    pub async fn download(&self, build_id: Uuid) -> anyhow::Result<String> {
+        let key = format!("builds/{}/{}.log", &build_id.to_string()[..8], build_id);
+        let resp = self.client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(&key)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("S3 download: {}", e))?;
+        let bytes = resp.body.collect().await
+            .map_err(|e| anyhow::anyhow!("S3 read: {}", e))?;
+        Ok(String::from_utf8_lossy(&bytes.into_bytes()).to_string())
+    }
 }
 
 pub mod secrets;
@@ -31,6 +78,7 @@ pub fn api_routes() -> Router<AppState> {
         .route("/projects/{id}/trigger", post(trigger_build))
         .route("/projects/{id}/builds", get(list_project_builds))
         .route("/builds/{id}", get(get_build))
+        .route("/builds/{id}/logs", get(get_build_logs))
         // Secrets
         .nest("/secrets", secrets::admin_routes())
         .nest("/secrets", secrets::names_route())
@@ -227,4 +275,64 @@ async fn get_build(
         })),
         None => Json(json!({ "error": "Build not found" })),
     }
+}
+
+async fn get_build_logs(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Json<Value> {
+    // Check build exists and get status
+    let build = match state.store.find_build_by_id(id).await.ok().flatten() {
+        Some(b) => b,
+        None => return Json(json!({ "error": "Build not found" })),
+    };
+
+    // Live log on disk (in-progress builds)
+    if build.status == BuildStatus::Running || build.status == BuildStatus::Queued {
+        let live_path = state.log_dir.join("live").join(format!("{}.log", id));
+        if let Ok(content) = tokio::fs::read_to_string(&live_path).await {
+            return Json(json!({
+                "build_id": id,
+                "source": "live",
+                "status": build.status,
+                "content": content,
+            }));
+        }
+    }
+
+    // History log from S3 (completed builds)
+    if let Some(s3) = &state.log_store {
+        match s3.download(id).await {
+            Ok(content) => {
+                return Json(json!({
+                    "build_id": id,
+                    "source": "s3",
+                    "status": build.status,
+                    "content": content,
+                }));
+            }
+            Err(e) => {
+                tracing::warn!(build_id = %id, error = %e, "S3 log fetch failed");
+            }
+        }
+    }
+
+    // Fallback: check disk even for completed builds (S3 upload may have failed)
+    let live_path = state.log_dir.join("live").join(format!("{}.log", id));
+    if let Ok(content) = tokio::fs::read_to_string(&live_path).await {
+        return Json(json!({
+            "build_id": id,
+            "source": "disk",
+            "status": build.status,
+            "content": content,
+        }));
+    }
+
+    Json(json!({
+        "build_id": id,
+        "source": "none",
+        "status": build.status,
+        "content": "",
+        "message": "No logs available yet",
+    }))
 }

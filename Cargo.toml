@@ -78,6 +78,8 @@ rustix = { version = "1", features = ["fs", "net"] }
 libc = "0.2"
 async-nats = "0.38"
 aes-gcm = "0.10"
+aws-sdk-s3 = "1"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
 
 # Benchmarking
 criterion = { version = "0.5", features = ["html_reports"] }

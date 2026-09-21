@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/status-badge";
+import { BuildLogViewer } from "@/components/build-log-viewer";
 import {
   ArrowLeft, Play, GitBranch, ExternalLink, Copy, Check,
-  Loader2, Zap, Webhook, ChevronRight, Clock, GitCommit, Settings, List,
+  Loader2, Zap, Webhook, ChevronRight, Clock, GitCommit, Settings, List, Terminal,
 } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
@@ -29,6 +30,39 @@ export default function PipelineDetailPage() {
   const [triggering, setTriggering] = useState(false);
   const [triggerMsg, setTriggerMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [copied, setCopied] = useState("");
+  const [logLines, setLogLines] = useState<{ line_number: number; stream: "stdout" | "stderr" | "system"; content: string; timestamp: string }[]>([]);
+  const [logSource, setLogSource] = useState<string>("");
+  const [showLogs, setShowLogs] = useState(false);
+  const logPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchLogs = useCallback(async (buildId: string) => {
+    try {
+      const res = await api.getBuildLogs(buildId);
+      setLogSource(res.source);
+      if (!res.content) { setLogLines([]); return; }
+      const lines = res.content.split("\n").filter(Boolean).map((line, i) => {
+        const match = line.match(/^\[([^\]]+)\]\s*\[([^\]]+)\]\s*\[(stdout|stderr)\]\s*(.*)/);
+        if (match) {
+          return { line_number: i + 1, timestamp: match[1], stream: match[3] as "stdout" | "stderr", content: match[4] };
+        }
+        return { line_number: i + 1, timestamp: "", stream: "stdout" as const, content: line };
+      });
+      setLogLines(lines);
+    } catch {
+      setLogLines([]);
+    }
+  }, []);
+
+  // Poll logs for running builds
+  useEffect(() => {
+    if (logPollRef.current) { clearInterval(logPollRef.current); logPollRef.current = null; }
+    if (!selectedBuild || !showLogs) return;
+    fetchLogs(selectedBuild.id);
+    if (selectedBuild.status === "running" || selectedBuild.status === "queued") {
+      logPollRef.current = setInterval(() => fetchLogs(selectedBuild.id), 3000);
+    }
+    return () => { if (logPollRef.current) clearInterval(logPollRef.current); };
+  }, [selectedBuild?.id, selectedBuild?.status, showLogs, fetchLogs]);
 
   const reload = async () => {
     try {
@@ -169,6 +203,25 @@ export default function PipelineDetailPage() {
                   </div>
                 </CardContent>
               </Card>
+            )}
+
+            {/* Build Logs */}
+            {selectedBuild && (
+              <div>
+                <button
+                  onClick={() => setShowLogs(!showLogs)}
+                  className="flex items-center gap-2 mb-3 text-[12px] font-black uppercase tracking-wider text-nb-gray hover:text-nb-black transition-colors"
+                >
+                  <Terminal className="w-4 h-4" />
+                  {showLogs ? "Hide Logs" : "Show Logs"}
+                  {logSource === "live" && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-nb-green/15 text-nb-green text-[9px] font-black">
+                      <span className="w-1.5 h-1.5 rounded-full bg-nb-green animate-pulse" />LIVE
+                    </span>
+                  )}
+                </button>
+                {showLogs && <BuildLogViewer logs={logLines} autoScroll={logSource === "live"} />}
+              </div>
             )}
 
             {builds.length === 0 && (

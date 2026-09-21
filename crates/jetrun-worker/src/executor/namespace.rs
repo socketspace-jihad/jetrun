@@ -89,5 +89,5 @@ pub async fn execute_isolated(step: &BuildStepJob, working_dir: &str) -> anyhow:
 /// Non-Linux fallback: bare sh -c, no isolation
 #[cfg(not(target_os = "linux"))]
 pub async fn execute_isolated(step: &BuildStepJob, working_dir: &str) -> anyhow::Result<i32> {
-    crate::execute_native(step, working_dir).await
+    crate::execute_with_logs(step, working_dir, None, false).await
 }

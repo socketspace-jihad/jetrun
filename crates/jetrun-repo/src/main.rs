@@ -29,7 +29,17 @@ async fn main() -> anyhow::Result<()> {
     let broker = Arc::new(jetrun_broker::NatsBroker::connect(&nats_url).await
         .map_err(|e| anyhow::anyhow!("NATS connection failed: {}. Start NATS with: docker run -d -p 4222:4222 nats:latest -js", e))?);
 
-    let state = routes::AppState { store, broker };
+    // Log storage (S3-compatible, optional)
+    let log_store = match routes::LogStoreClient::from_env().await {
+        Ok(s) => Some(Arc::new(s)),
+        Err(e) => { tracing::warn!(error = %e, "S3 log store not configured — log endpoint will serve from disk only"); None }
+    };
+
+    let log_dir = std::path::PathBuf::from(
+        std::env::var("LOG_DIR").unwrap_or_else(|_| "/opt/jetrun/data/logs".into())
+    );
+
+    let state = routes::AppState { store, broker, log_store, log_dir };
 
     let app = Router::new()
         .nest("/api/v1", routes::api_routes())
