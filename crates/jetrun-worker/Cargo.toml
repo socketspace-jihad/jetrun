@@ -7,6 +7,11 @@ edition.workspace = true
 name = "jetrun-worker"
 path = "src/main.rs"
 
+[features]
+default = ["namespace-isolation"]
+namespace-isolation = []
+docker = ["dep:bollard"]
+
 [dependencies]
 mimalloc = { workspace = true }
 jetrun-common = { workspace = true }
@@ -14,7 +19,6 @@ jetrun-store = { workspace = true }
 jetrun-broker = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
-tonic = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
@@ -22,7 +26,8 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
-axum = { workspace = true }
-bollard = "0.18"
-bytes = "1"
 futures = { workspace = true }
+libc = { workspace = true }
+
+# Docker executor (optional)
+bollard = { version = "0.18", optional = true }

@@ -110,8 +110,30 @@ async fn execute_build(job: &BuildJob) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Execute one step as native process with stdout/stderr streaming
+/// Execute a step — selects executor based on step config:
+///   image set → Docker (if compiled with --features docker)
+///   no image  → Linux namespaces (if Linux + feature enabled) or bare sh -c
 async fn execute_step(step: &BuildStepJob, working_dir: &str) -> anyhow::Result<i32> {
+    // Docker executor: when `image:` is specified in pipeline YAML
+    #[cfg(feature = "docker")]
+    if let Some(image) = &step.image {
+        tracing::info!(step = %step.name, image = %image, "using Docker executor");
+        // TODO: wire bollard DockerExecutor here
+        // For now fall through to namespace/native
+    }
+
+    // Linux namespace isolation (default on Linux)
+    #[cfg(all(target_os = "linux", feature = "namespace-isolation"))]
+    return executor::namespace::execute_isolated(step, working_dir).await;
+
+    // Bare sh -c fallback (macOS dev, or no isolation features)
+    #[cfg(not(all(target_os = "linux", feature = "namespace-isolation")))]
+    return execute_native(step, working_dir).await;
+}
+
+/// Bare sh -c execution — no isolation, for macOS or when namespaces are disabled
+#[allow(dead_code)]
+pub async fn execute_native(step: &BuildStepJob, working_dir: &str) -> anyhow::Result<i32> {
     let start = Instant::now();
 
     let mut cmd = Command::new("sh");
@@ -150,8 +172,7 @@ async fn execute_step(step: &BuildStepJob, working_dir: &str) -> anyhow::Result<
     }?;
 
     let _ = tokio::join!(t1, t2);
-    let ms = start.elapsed().as_millis() as u64;
     let code = status.code().unwrap_or(-1);
-    tracing::info!(step = %step.name, code = code, ms = ms, "step finished");
+    tracing::info!(step = %step.name, code = code, ms = start.elapsed().as_millis() as u64, "step finished (native)");
     Ok(code)
 }

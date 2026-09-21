@@ -1,4 +1,6 @@
+#[cfg(feature = "docker")]
 pub mod docker;
+pub mod namespace;
 pub mod native;
 
 /// Output line from a step execution
