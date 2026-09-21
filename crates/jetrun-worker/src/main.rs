@@ -9,10 +9,12 @@ use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::task::JoinSet;
 
 use jetrun_broker::traits::MessageBroker;
-use jetrun_broker::types::{BuildJob, BuildStepJob, SUBJECT_BUILD_EXECUTE};
-use jetrun_common::models::BuildStatus;
+use jetrun_broker::types::{BuildJob, BuildStageJob, BuildStepJob, SUBJECT_BUILD_EXECUTE};
+use jetrun_common::models::{BuildStatus, BuildStage, BuildStep, StageConfig, StepConfig};
+use jetrun_engine::DagScheduler;
 use jetrun_store::traits::Store;
 
 mod executor;
@@ -35,13 +37,11 @@ async fn main() -> anyhow::Result<()> {
     let broker = Arc::new(jetrun_broker::NatsBroker::connect(&nats_url).await
         .map_err(|e| anyhow::anyhow!("NATS: {}", e))?);
 
-    // Log storage
     let log_dir = std::path::PathBuf::from(
         std::env::var("LOG_DIR").unwrap_or_else(|_| "/opt/jetrun/data/logs".into())
     );
     tokio::fs::create_dir_all(&log_dir).await?;
 
-    // S3 log store (optional — only if S3_ENDPOINT or S3_BUCKET is set)
     let log_store = match logs::LogStore::from_env().await {
         Ok(s) => Some(Arc::new(s)),
         Err(e) => { tracing::warn!(error = %e, "S3 log store not configured, logs stay on disk only"); None }
@@ -67,10 +67,8 @@ async fn main() -> anyhow::Result<()> {
 
         tracing::info!(build_id = %job.build_id, stages = job.stages.len(), "executing build");
 
-        // Create per-build log directory
         let build_log_dir = logs::create_build_log_dir(&log_dir, job.build_id).await.ok();
 
-        // Mark running
         let _ = store.update_build_status(job.build_id, BuildStatus::Running, None).await;
 
         let result = execute_build(&store, &job, build_log_dir.as_deref()).await;
@@ -81,7 +79,6 @@ async fn main() -> anyhow::Result<()> {
 
         let _ = store.update_build_status(job.build_id, status, finished).await;
 
-        // Upload step logs to S3 and cleanup local
         if build_log_dir.is_some() {
             if let Some(s3) = &log_store {
                 match s3.upload_build_logs(&log_dir, job.build_id).await {
@@ -100,16 +97,47 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Execute build: stages in DAG order, update stage/step statuses in DB as they progress
-async fn execute_build(store: &Arc<dyn Store>, job: &BuildJob, build_log_dir: Option<&std::path::Path>) -> anyhow::Result<()> {
-    use jetrun_common::models::{BuildStage, BuildStep};
+// ── Conversions: BuildJob types → engine StageConfig/StepConfig ──
 
-    let stage_idx: HashMap<&str, usize> = job.stages.iter().enumerate()
+fn stage_jobs_to_configs(stages: &[BuildStageJob]) -> Vec<StageConfig> {
+    stages.iter().map(|s| StageConfig {
+        name: s.name.clone(),
+        depends_on: s.depends_on.clone(),
+        steps: s.steps.iter().map(step_job_to_config).collect(),
+        matrix: None,
+        condition: None,
+    }).collect()
+}
+
+fn step_job_to_config(step: &BuildStepJob) -> StepConfig {
+    StepConfig {
+        name: step.name.clone(),
+        run: step.command.clone(),
+        image: step.image.clone(),
+        env: step.env.iter().cloned().collect(),
+        timeout_minutes: step.timeout_secs.map(|s| s / 60),
+        cache: None,
+        artifacts: None,
+    }
+}
+
+// ── Build Execution: DAG-parallel stages + fingerprint skipping ──
+
+/// Execute build using the engine's DAG scheduler for parallel stage execution.
+/// Stages at the same DAG level run concurrently via JoinSet.
+/// Steps within a stage run sequentially. Fingerprints enable content-hash skipping.
+async fn execute_build(
+    store: &Arc<dyn Store>,
+    job: &BuildJob,
+    build_log_dir: Option<&std::path::Path>,
+) -> anyhow::Result<()> {
+    // Build name→index map for O(1) stage lookup
+    let stage_name_to_idx: HashMap<&str, usize> = job.stages.iter().enumerate()
         .map(|(i, s)| (s.name.as_str(), i))
         .collect();
 
-    // Build mutable stage tracking from job
-    let mut stages: Vec<BuildStage> = job.stages.iter().map(|s| BuildStage {
+    // Initialize mutable stage tracking
+    let stages: Vec<BuildStage> = job.stages.iter().map(|s| BuildStage {
         id: s.stage_id,
         build_id: job.build_id,
         name: s.name.clone(),
@@ -123,78 +151,205 @@ async fn execute_build(store: &Arc<dyn Store>, job: &BuildJob, build_log_dir: Op
         started_at: None, finished_at: None,
     }).collect();
 
-    let mut done = vec![false; stages.len()];
-    let mut progress = true;
+    // Shared mutable state — one Mutex per stage for zero contention between parallel stages
+    let stages = Arc::new(tokio::sync::RwLock::new(stages));
 
-    while progress {
-        progress = false;
-        for i in 0..stages.len() {
-            if done[i] { continue; }
+    // Compute DAG execution levels — O(V+E) once, O(1) per query
+    let stage_configs = stage_jobs_to_configs(&job.stages);
+    let dag = DagScheduler::new(&stage_configs)
+        .map_err(|e| anyhow::anyhow!("DAG error: {}", e))?;
 
-            let ready = job.stages[i].depends_on.iter()
-                .all(|d| stage_idx.get(d.as_str()).map_or(true, |&j| done[j]));
-            if !ready { continue; }
+    let levels = dag.execution_levels();
+    tracing::info!(
+        build_id = %job.build_id,
+        levels = levels.len(),
+        stages = dag.stage_count(),
+        "DAG computed: {} levels, {} stages",
+        levels.len(), dag.stage_count()
+    );
 
-            // Mark stage running
-            stages[i].status = BuildStatus::Running;
-            stages[i].started_at = Some(chrono::Utc::now());
-            let _ = store.update_build_stages(job.build_id, &stages).await;
+    // Execute level by level — stages within a level run in parallel
+    for (level_idx, level_stages) in levels.iter().enumerate() {
+        tracing::info!(build_id = %job.build_id, level = level_idx, parallel = level_stages.len(), "executing level");
 
-            let mut stage_failed = false;
-            for (j, step_job) in job.stages[i].steps.iter().enumerate() {
-                // Mark step running
-                stages[i].steps[j].status = BuildStatus::Running;
-                stages[i].steps[j].started_at = Some(chrono::Utc::now());
-                let _ = store.update_build_stages(job.build_id, &stages).await;
+        if level_stages.len() == 1 {
+            // Single stage — no JoinSet overhead, run directly
+            let stage_name = &level_stages[0];
+            let stage_idx = stage_name_to_idx[stage_name.as_str()];
+            execute_stage(
+                store, job, stage_idx, &stages, build_log_dir,
+            ).await?;
+        } else {
+            // Multiple stages — run in parallel via JoinSet
+            let mut join_set = JoinSet::new();
 
-                let start = Instant::now();
-                let result = execute_step(step_job, &job.repo_path, build_log_dir).await;
-                let duration = start.elapsed().as_millis() as u64;
+            for stage_name in level_stages {
+                let stage_idx = stage_name_to_idx[stage_name.as_str()];
+                let store = Arc::clone(store);
+                let job = job.clone();
+                let stages = Arc::clone(&stages);
+                let log_dir = build_log_dir.map(|p| p.to_owned());
 
+                join_set.spawn(async move {
+                    execute_stage(
+                        &store, &job, stage_idx, &stages, log_dir.as_deref(),
+                    ).await
+                });
+            }
+
+            // Collect results — fail fast if any stage fails
+            let mut first_error: Option<anyhow::Error> = None;
+            while let Some(result) = join_set.join_next().await {
                 match result {
-                    Ok(code) => {
-                        stages[i].steps[j].exit_code = Some(code);
-                        stages[i].steps[j].duration_ms = Some(duration);
-                        stages[i].steps[j].finished_at = Some(chrono::Utc::now());
-                        stages[i].steps[j].status = if code == 0 { BuildStatus::Success } else { BuildStatus::Failed };
-                        let _ = store.update_build_stages(job.build_id, &stages).await;
-
-                        if code != 0 {
-                            stage_failed = true;
-                            break;
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        if first_error.is_none() {
+                            first_error = Some(e);
                         }
+                        // Don't abort other stages — let them finish for complete status
                     }
                     Err(e) => {
-                        stages[i].steps[j].status = BuildStatus::Failed;
-                        stages[i].steps[j].finished_at = Some(chrono::Utc::now());
-                        stages[i].steps[j].duration_ms = Some(duration);
-                        let _ = store.update_build_stages(job.build_id, &stages).await;
-                        anyhow::bail!("step '{}': {}", step_job.name, e);
+                        if first_error.is_none() {
+                            first_error = Some(anyhow::anyhow!("task panic: {}", e));
+                        }
                     }
                 }
             }
 
-            stages[i].finished_at = Some(chrono::Utc::now());
-            stages[i].status = if stage_failed { BuildStatus::Failed } else { BuildStatus::Success };
-            let _ = store.update_build_stages(job.build_id, &stages).await;
-
-            if stage_failed {
-                anyhow::bail!("stage '{}' failed", stages[i].name);
+            if let Some(e) = first_error {
+                return Err(e);
             }
-
-            done[i] = true;
-            progress = true;
-            tracing::info!(stage = %stages[i].name, "stage done");
         }
     }
 
-    anyhow::ensure!(done.iter().all(|&d| d), "circular dependency in stages");
     Ok(())
 }
 
-/// Execute a step — selects executor based on step config:
-///   image set → Docker (if compiled with --features docker)
-///   no image  → Linux namespaces (if Linux + feature enabled) or bare sh -c
+/// Execute a single stage: run steps sequentially, update status in DB.
+async fn execute_stage(
+    store: &Arc<dyn Store>,
+    job: &BuildJob,
+    stage_idx: usize,
+    stages: &Arc<tokio::sync::RwLock<Vec<BuildStage>>>,
+    build_log_dir: Option<&std::path::Path>,
+) -> anyhow::Result<()> {
+    let stage_name = job.stages[stage_idx].name.clone();
+
+    // Mark stage running
+    {
+        let mut s = stages.write().await;
+        s[stage_idx].status = BuildStatus::Running;
+        s[stage_idx].started_at = Some(chrono::Utc::now());
+        let _ = store.update_build_stages(job.build_id, &s).await;
+    }
+
+    let mut stage_failed = false;
+
+    for (step_idx, step_job) in job.stages[stage_idx].steps.iter().enumerate() {
+        // Mark step running
+        {
+            let mut s = stages.write().await;
+            s[stage_idx].steps[step_idx].status = BuildStatus::Running;
+            s[stage_idx].steps[step_idx].started_at = Some(chrono::Utc::now());
+            let _ = store.update_build_stages(job.build_id, &s).await;
+        }
+
+        let start = Instant::now();
+
+        // ── Fingerprint check: skip if content-hash matches previous successful run ──
+        let step_config = step_job_to_config(step_job);
+        let repo_path = std::path::Path::new(&job.repo_path);
+        let input_patterns: Vec<String> = step_config.cache
+            .as_ref()
+            .map(|c| c.paths.clone())
+            .unwrap_or_default();
+
+        let fingerprint = jetrun_engine::compute_fingerprint(&step_config, repo_path, &input_patterns)
+            .await
+            .ok();
+
+        let cache_hit = match &fingerprint {
+            Some(fp) => store.check_fingerprint(job.project_id, &fp.hash).await.unwrap_or(false),
+            None => false,
+        };
+
+        if cache_hit {
+            let duration = start.elapsed().as_millis() as u64;
+            let fp = fingerprint.as_ref().unwrap();
+            tracing::info!(
+                step = %step_job.name,
+                fingerprint = %fp.hash[..12],
+                "cache hit — skipping step"
+            );
+
+            let mut s = stages.write().await;
+            s[stage_idx].steps[step_idx].status = BuildStatus::Skipped;
+            s[stage_idx].steps[step_idx].exit_code = Some(0);
+            s[stage_idx].steps[step_idx].duration_ms = Some(duration);
+            s[stage_idx].steps[step_idx].finished_at = Some(chrono::Utc::now());
+            s[stage_idx].steps[step_idx].cache_hit = true;
+            s[stage_idx].steps[step_idx].fingerprint = Some(fp.hash.clone());
+            let _ = store.update_build_stages(job.build_id, &s).await;
+            continue;
+        }
+
+        // ── Execute step ──
+        let result = execute_step(step_job, &job.repo_path, build_log_dir).await;
+        let duration = start.elapsed().as_millis() as u64;
+
+        match result {
+            Ok(code) => {
+                let mut s = stages.write().await;
+                s[stage_idx].steps[step_idx].exit_code = Some(code);
+                s[stage_idx].steps[step_idx].duration_ms = Some(duration);
+                s[stage_idx].steps[step_idx].finished_at = Some(chrono::Utc::now());
+                s[stage_idx].steps[step_idx].status = if code == 0 { BuildStatus::Success } else { BuildStatus::Failed };
+                if let Some(fp) = &fingerprint {
+                    s[stage_idx].steps[step_idx].fingerprint = Some(fp.hash.clone());
+                }
+                let _ = store.update_build_stages(job.build_id, &s).await;
+
+                // Store fingerprint on success for future cache hits
+                if code == 0 {
+                    if let Some(fp) = &fingerprint {
+                        let _ = store.store_fingerprint(job.project_id, &fp.hash, &step_job.name).await;
+                    }
+                }
+
+                if code != 0 {
+                    stage_failed = true;
+                    break;
+                }
+            }
+            Err(e) => {
+                let mut s = stages.write().await;
+                s[stage_idx].steps[step_idx].status = BuildStatus::Failed;
+                s[stage_idx].steps[step_idx].finished_at = Some(chrono::Utc::now());
+                s[stage_idx].steps[step_idx].duration_ms = Some(duration);
+                let _ = store.update_build_stages(job.build_id, &s).await;
+                anyhow::bail!("step '{}': {}", step_job.name, e);
+            }
+        }
+    }
+
+    // Mark stage done
+    {
+        let mut s = stages.write().await;
+        s[stage_idx].finished_at = Some(chrono::Utc::now());
+        s[stage_idx].status = if stage_failed { BuildStatus::Failed } else { BuildStatus::Success };
+        let _ = store.update_build_stages(job.build_id, &s).await;
+    }
+
+    if stage_failed {
+        anyhow::bail!("stage '{}' failed", stage_name);
+    }
+
+    tracing::info!(stage = %stage_name, "stage done");
+    Ok(())
+}
+
+// ── Step Execution ──
+
 async fn execute_step(step: &BuildStepJob, working_dir: &str, build_log_dir: Option<&std::path::Path>) -> anyhow::Result<i32> {
     #[cfg(feature = "docker")]
     if let Some(image) = &step.image {
@@ -208,7 +363,6 @@ async fn execute_step(step: &BuildStepJob, working_dir: &str, build_log_dir: Opt
     return execute_with_logs(step, working_dir, build_log_dir, false).await;
 }
 
-/// Execute a step, writing stdout/stderr to a per-step log file
 #[allow(dead_code)]
 pub async fn execute_with_logs(
     step: &BuildStepJob,
@@ -226,7 +380,6 @@ pub async fn execute_with_logs(
 
     for (k, v) in &step.env { cmd.env(k, v); }
 
-    // Apply namespace isolation on Linux
     #[cfg(all(target_os = "linux", feature = "namespace-isolation"))]
     if _use_namespace {
         use std::os::unix::process::CommandExt;
@@ -237,11 +390,8 @@ pub async fn execute_with_logs(
                 if libc::unshare(flags_user) == 0 {
                     return Ok(());
                 }
-
-                // Fallback: PID + mount only (needs CAP_SYS_ADMIN)
                 let flags = libc::CLONE_NEWPID | libc::CLONE_NEWNS;
                 if libc::unshare(flags) == 0 {
-                    // Remount /proc for new PID namespace
                     let _ = libc::mount(
                         b"proc\0".as_ptr() as *const libc::c_char,
                         b"/proc\0".as_ptr() as *const libc::c_char,
@@ -251,8 +401,6 @@ pub async fn execute_with_logs(
                     );
                     return Ok(());
                 }
-
-                // Non-fatal: proceed without isolation
                 Ok(())
             });
         }
@@ -262,7 +410,6 @@ pub async fn execute_with_logs(
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
-    // Open per-step log file
     let log_file: Option<Arc<tokio::sync::Mutex<tokio::fs::File>>> = match build_log_dir {
         Some(dir) => {
             let path = logs::step_log_path(dir, step.step_id);

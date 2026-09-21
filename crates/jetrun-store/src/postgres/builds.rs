@@ -52,6 +52,21 @@ impl BuildRepo for PgStore {
             .execute(&self.pool).await?;
         Ok(())
     }
+
+    async fn check_fingerprint(&self, project_id: Uuid, hash: &str) -> Result<bool, StoreError> {
+        let row = sqlx::query_scalar::<_, i64>(
+            "SELECT 1 FROM fingerprint_cache WHERE hash = $1 AND project_id = $2 LIMIT 1"
+        ).bind(hash).bind(project_id).fetch_optional(&self.pool).await?;
+        Ok(row.is_some())
+    }
+
+    async fn store_fingerprint(&self, project_id: Uuid, hash: &str, step_name: &str) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO fingerprint_cache (hash, project_id, step_name) VALUES ($1, $2, $3) ON CONFLICT (hash) DO NOTHING"
+        ).bind(hash).bind(project_id).bind(step_name)
+        .execute(&self.pool).await?;
+        Ok(())
+    }
 }
 
 #[derive(sqlx::FromRow)]

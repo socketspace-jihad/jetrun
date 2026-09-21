@@ -5,12 +5,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 use axum::Router;
 use tracing_subscriber::EnvFilter;
 
-mod fingerprint;
-mod orchestrator;
-mod parser;
-mod scheduler;
 mod state;
-
 use state::AppState;
 
 #[tokio::main]

@@ -15,6 +15,7 @@ docker = ["dep:bollard"]
 [dependencies]
 mimalloc = { workspace = true }
 jetrun-common = { workspace = true }
+jetrun-engine = { path = "../jetrun-engine" }
 jetrun-store = { workspace = true }
 jetrun-broker = { workspace = true }
 tokio = { workspace = true }

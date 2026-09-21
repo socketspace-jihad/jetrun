@@ -3,6 +3,10 @@ name = "jetrun-engine"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "jetrun_engine"
+path = "src/lib.rs"
+
 [[bin]]
 name = "jetrun-engine"
 path = "src/main.rs"
