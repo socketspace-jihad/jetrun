@@ -4,14 +4,12 @@ use async_nats::jetstream;
 use crate::traits::{BrokerError, Message, MessageBroker, MessageStream};
 
 /// NATS JetStream-backed message broker.
-/// Provides persistent, at-least-once delivery with automatic redelivery on failure.
 pub struct NatsBroker {
     client: async_nats::Client,
     jetstream: jetstream::Context,
 }
 
 impl NatsBroker {
-    /// Connect to NATS server and ensure the JetStream stream exists.
     pub async fn connect(url: &str) -> Result<Self, BrokerError> {
         let client = async_nats::connect(url)
             .await
@@ -25,7 +23,7 @@ impl NatsBroker {
                 name: "JETRUN".to_string(),
                 subjects: vec!["jetrun.>".to_string()],
                 retention: jetstream::stream::RetentionPolicy::WorkQueue,
-                max_age: std::time::Duration::from_secs(86400), // 24h
+                max_age: std::time::Duration::from_secs(86400),
                 ..Default::default()
             })
             .await
@@ -52,30 +50,33 @@ impl MessageBroker for NatsBroker {
     }
 
     async fn subscribe(&self, subject: &str) -> Result<Box<dyn MessageStream>, BrokerError> {
-        let consumer = self
-            .jetstream
+        let stream = self.jetstream
             .get_stream("JETRUN")
             .await
-            .map_err(|e| BrokerError::Subscribe(e.to_string()))?
-            .get_or_create_consumer(
-                subject,
-                jetstream::consumer::pull::Config {
-                    durable_name: Some(subject.replace('.', "-")),
-                    filter_subject: subject.to_string(),
-                    ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                    ack_wait: std::time::Duration::from_secs(60),
-                    ..Default::default()
-                },
-            )
-            .await
             .map_err(|e| BrokerError::Subscribe(e.to_string()))?;
+
+        // Delete any stale consumer from previous crash loops
+        let consumer_name = subject.replace('.', "-");
+        let _ = stream.delete_consumer(&consumer_name).await;
+
+        // Create fresh consumer
+        let consumer = stream
+            .create_consumer(jetstream::consumer::pull::Config {
+                durable_name: Some(consumer_name.clone()),
+                filter_subject: subject.to_string(),
+                ack_policy: jetstream::consumer::AckPolicy::Explicit,
+                ack_wait: std::time::Duration::from_secs(120),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| BrokerError::Subscribe(format!("create consumer: {}", e)))?;
 
         let messages = consumer
             .messages()
             .await
-            .map_err(|e| BrokerError::Subscribe(e.to_string()))?;
+            .map_err(|e| BrokerError::Subscribe(format!("messages stream: {}", e)))?;
 
-        tracing::info!(subject = %subject, "subscribed to NATS stream");
+        tracing::info!(subject = %subject, consumer = %consumer_name, "subscribed to NATS stream");
 
         Ok(Box::new(NatsMessageStream { messages }))
     }
@@ -117,7 +118,11 @@ impl MessageStream for NatsMessageStream {
                     ack_handle: Some(Box::new(msg)),
                 })
             }
-            _ => None,
+            Some(Err(e)) => {
+                tracing::warn!(error = %e, "NATS message error");
+                None
+            }
+            None => None,
         }
     }
 }
