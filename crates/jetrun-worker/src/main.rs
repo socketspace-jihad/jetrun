@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
         // Mark running
         let _ = store.update_build_status(job.build_id, BuildStatus::Running, None).await;
 
-        let result = execute_build(&job).await;
+        let result = execute_build(&store, &job).await;
         let (status, finished) = match &result {
             Ok(()) => (BuildStatus::Success, Some(chrono::Utc::now())),
             Err(_) => (BuildStatus::Failed, Some(chrono::Utc::now())),
@@ -74,35 +74,91 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-/// Execute build: stages in dependency order, steps sequential within each stage
-async fn execute_build(job: &BuildJob) -> anyhow::Result<()> {
+/// Execute build: stages in DAG order, update stage/step statuses in DB as they progress
+async fn execute_build(store: &Arc<dyn Store>, job: &BuildJob) -> anyhow::Result<()> {
+    use jetrun_common::models::{BuildStage, BuildStep};
+
     let stage_idx: HashMap<&str, usize> = job.stages.iter().enumerate()
         .map(|(i, s)| (s.name.as_str(), i))
         .collect();
 
-    let mut done = vec![false; job.stages.len()];
+    // Build mutable stage tracking from job
+    let mut stages: Vec<BuildStage> = job.stages.iter().map(|s| BuildStage {
+        id: s.stage_id,
+        build_id: job.build_id,
+        name: s.name.clone(),
+        status: BuildStatus::Queued,
+        steps: s.steps.iter().map(|step| BuildStep {
+            id: step.step_id, stage_id: s.stage_id, name: step.name.clone(),
+            status: BuildStatus::Queued, exit_code: None, log_url: None,
+            started_at: None, finished_at: None, duration_ms: None,
+            cache_hit: false, fingerprint: None,
+        }).collect(),
+        started_at: None, finished_at: None,
+    }).collect();
+
+    let mut done = vec![false; stages.len()];
     let mut progress = true;
 
     while progress {
         progress = false;
-        for (i, stage) in job.stages.iter().enumerate() {
+        for i in 0..stages.len() {
             if done[i] { continue; }
 
-            // All deps met?
-            let ready = stage.depends_on.iter()
+            let ready = job.stages[i].depends_on.iter()
                 .all(|d| stage_idx.get(d.as_str()).map_or(true, |&j| done[j]));
             if !ready { continue; }
 
-            tracing::info!(stage = %stage.name, "▸ stage started");
+            // Mark stage running
+            stages[i].status = BuildStatus::Running;
+            stages[i].started_at = Some(chrono::Utc::now());
+            let _ = store.update_build_stages(job.build_id, &stages).await;
 
-            for step in &stage.steps {
-                let code = execute_step(step, &job.repo_path).await?;
-                anyhow::ensure!(code == 0, "step '{}' exited {}", step.name, code);
+            let mut stage_failed = false;
+            for (j, step_job) in job.stages[i].steps.iter().enumerate() {
+                // Mark step running
+                stages[i].steps[j].status = BuildStatus::Running;
+                stages[i].steps[j].started_at = Some(chrono::Utc::now());
+                let _ = store.update_build_stages(job.build_id, &stages).await;
+
+                let start = Instant::now();
+                let result = execute_step(step_job, &job.repo_path).await;
+                let duration = start.elapsed().as_millis() as u64;
+
+                match result {
+                    Ok(code) => {
+                        stages[i].steps[j].exit_code = Some(code);
+                        stages[i].steps[j].duration_ms = Some(duration);
+                        stages[i].steps[j].finished_at = Some(chrono::Utc::now());
+                        stages[i].steps[j].status = if code == 0 { BuildStatus::Success } else { BuildStatus::Failed };
+                        let _ = store.update_build_stages(job.build_id, &stages).await;
+
+                        if code != 0 {
+                            stage_failed = true;
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        stages[i].steps[j].status = BuildStatus::Failed;
+                        stages[i].steps[j].finished_at = Some(chrono::Utc::now());
+                        stages[i].steps[j].duration_ms = Some(duration);
+                        let _ = store.update_build_stages(job.build_id, &stages).await;
+                        anyhow::bail!("step '{}': {}", step_job.name, e);
+                    }
+                }
+            }
+
+            stages[i].finished_at = Some(chrono::Utc::now());
+            stages[i].status = if stage_failed { BuildStatus::Failed } else { BuildStatus::Success };
+            let _ = store.update_build_stages(job.build_id, &stages).await;
+
+            if stage_failed {
+                anyhow::bail!("stage '{}' failed", stages[i].name);
             }
 
             done[i] = true;
             progress = true;
-            tracing::info!(stage = %stage.name, "✓ stage done");
+            tracing::info!(stage = %stages[i].name, "✓ stage done");
         }
     }
 

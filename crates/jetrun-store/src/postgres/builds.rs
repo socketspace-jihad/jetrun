@@ -44,6 +44,14 @@ impl BuildRepo for PgStore {
             .execute(&self.pool).await?;
         Ok(())
     }
+
+    async fn update_build_stages(&self, id: Uuid, stages: &[jetrun_common::models::BuildStage]) -> Result<(), StoreError> {
+        let stages_json = serde_json::to_value(stages).unwrap_or_default();
+        sqlx::query("UPDATE builds SET stages = $2 WHERE id = $1")
+            .bind(id).bind(stages_json)
+            .execute(&self.pool).await?;
+        Ok(())
+    }
 }
 
 #[derive(sqlx::FromRow)]

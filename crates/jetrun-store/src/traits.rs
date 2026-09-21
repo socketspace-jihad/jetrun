@@ -121,6 +121,7 @@ pub trait BuildRepo: Send + Sync {
     async fn find_build_by_id(&self, id: Uuid) -> Result<Option<Build>, StoreError>;
     async fn list_builds(&self, limit: i64) -> Result<Vec<Build>, StoreError>;
     async fn update_build_status(&self, id: Uuid, status: BuildStatus, finished_at: Option<chrono::DateTime<chrono::Utc>>) -> Result<(), StoreError>;
+    async fn update_build_stages(&self, id: Uuid, stages: &[jetrun_common::models::BuildStage]) -> Result<(), StoreError>;
 }
 
 // ── Group (Team) ──
