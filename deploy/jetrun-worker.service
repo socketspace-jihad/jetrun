@@ -1,7 +1,7 @@
 [Unit]
 Description=jetrun Build Worker
-After=network.target docker.service
-Wants=docker.service
+After=network.target postgresql.service nats.service
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -15,17 +15,14 @@ StartLimitBurst=5
 StartLimitIntervalSec=60
 
 Environment=RUST_LOG=info
-Environment=CACHE_URL=http://127.0.0.1:9003
-Environment=MAX_CONCURRENT_STEPS=4
-Environment=WORKSPACE_DIR=/opt/jetrun/data/workspace
+Environment=DATABASE_URL=postgres://jetrun:jetrun_dev@localhost:5432/jetrun
+Environment=NATS_URL=nats://localhost:4222
 
-# Worker needs Docker socket access
-SupplementaryGroups=docker
-
-# Hardening (less restrictive — needs Docker + workspace writes)
+# Hardening
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/opt/jetrun/data /var/run/docker.sock
+ProtectHome=read-only
+ReadWritePaths=/opt/jetrun/data
 PrivateTmp=true
 
 LimitNOFILE=65535
