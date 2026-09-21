@@ -17,13 +17,19 @@ StartLimitIntervalSec=60
 Environment=RUST_LOG=info
 Environment=DATABASE_URL=postgres://jetrun:jetrun_dev@localhost:5432/jetrun
 Environment=NATS_URL=nats://localhost:4222
+Environment=HOME=/opt/jetrun/data/home
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin:/opt/jetrun/data/home/go/bin
+Environment=GOPATH=/opt/jetrun/data/home/go
+Environment=GOMODCACHE=/opt/jetrun/data/home/go/pkg/mod
 
-# Hardening
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
+# Hardening — relaxed enough for namespace isolation + build tools
+ProtectSystem=full
 ReadWritePaths=/opt/jetrun/data
 PrivateTmp=true
+
+# Allow user namespace creation for build isolation
+AmbientCapabilities=CAP_SYS_ADMIN
+NoNewPrivileges=false
 
 LimitNOFILE=65535
 LimitNPROC=4096

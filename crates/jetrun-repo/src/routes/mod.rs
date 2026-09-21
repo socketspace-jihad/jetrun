@@ -53,8 +53,9 @@ impl LogStoreClient {
         Ok(Self { client, bucket })
     }
 
-    pub async fn download(&self, build_id: Uuid) -> anyhow::Result<String> {
-        let key = format!("builds/{}/{}.log", &build_id.to_string()[..8], build_id);
+    pub async fn download_step(&self, build_id: Uuid, step_id: Uuid) -> anyhow::Result<String> {
+        let prefix = &build_id.to_string()[..8];
+        let key = format!("builds/{}/{}/{}.log", prefix, build_id, step_id);
         let resp = self.client
             .get_object()
             .bucket(&self.bucket)
@@ -78,7 +79,8 @@ pub fn api_routes() -> Router<AppState> {
         .route("/projects/{id}/trigger", post(trigger_build))
         .route("/projects/{id}/builds", get(list_project_builds))
         .route("/builds/{id}", get(get_build))
-        .route("/builds/{id}/logs", get(get_build_logs))
+        .route("/builds/{id}/logs", get(get_build_log_index))
+        .route("/builds/{id}/logs/{step_id}", get(get_step_logs))
         // Secrets
         .nest("/secrets", secrets::admin_routes())
         .nest("/secrets", secrets::names_route())
@@ -277,62 +279,94 @@ async fn get_build(
     }
 }
 
-async fn get_build_logs(
+/// Returns step index for a build: list of steps with their ids and names
+async fn get_build_log_index(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Json<Value> {
-    // Check build exists and get status
     let build = match state.store.find_build_by_id(id).await.ok().flatten() {
         Some(b) => b,
         None => return Json(json!({ "error": "Build not found" })),
     };
 
-    // Live log on disk (in-progress builds)
-    if build.status == BuildStatus::Running || build.status == BuildStatus::Queued {
-        let live_path = state.log_dir.join("live").join(format!("{}.log", id));
-        if let Ok(content) = tokio::fs::read_to_string(&live_path).await {
+    let steps: Vec<Value> = build.stages.iter().flat_map(|stage| {
+        stage.steps.iter().map(|step| json!({
+            "step_id": step.id,
+            "stage_name": stage.name,
+            "step_name": step.name,
+            "status": step.status,
+            "duration_ms": step.duration_ms,
+        }))
+    }).collect();
+
+    Json(json!({
+        "build_id": id,
+        "status": build.status,
+        "steps": steps,
+    }))
+}
+
+/// Returns log content for a specific step
+async fn get_step_logs(
+    State(state): State<AppState>,
+    Path((build_id, step_id)): Path<(Uuid, Uuid)>,
+) -> Json<Value> {
+    let build = match state.store.find_build_by_id(build_id).await.ok().flatten() {
+        Some(b) => b,
+        None => return Json(json!({ "error": "Build not found" })),
+    };
+
+    let is_live = build.status == BuildStatus::Running || build.status == BuildStatus::Queued;
+
+    // Try disk first (live or fallback for completed builds without S3)
+    let disk_path = state.log_dir
+        .join("live")
+        .join(build_id.to_string())
+        .join(format!("{}.log", step_id));
+
+    if is_live {
+        if let Ok(content) = tokio::fs::read_to_string(&disk_path).await {
             return Json(json!({
-                "build_id": id,
+                "build_id": build_id,
+                "step_id": step_id,
                 "source": "live",
-                "status": build.status,
+                "content": content,
+            }));
+        }
+        return Json(json!({
+            "build_id": build_id,
+            "step_id": step_id,
+            "source": "live",
+            "content": "",
+        }));
+    }
+
+    // Completed: try S3 first
+    if let Some(s3) = &state.log_store {
+        if let Ok(content) = s3.download_step(build_id, step_id).await {
+            return Json(json!({
+                "build_id": build_id,
+                "step_id": step_id,
+                "source": "s3",
                 "content": content,
             }));
         }
     }
 
-    // History log from S3 (completed builds)
-    if let Some(s3) = &state.log_store {
-        match s3.download(id).await {
-            Ok(content) => {
-                return Json(json!({
-                    "build_id": id,
-                    "source": "s3",
-                    "status": build.status,
-                    "content": content,
-                }));
-            }
-            Err(e) => {
-                tracing::warn!(build_id = %id, error = %e, "S3 log fetch failed");
-            }
-        }
-    }
-
-    // Fallback: check disk even for completed builds (S3 upload may have failed)
-    let live_path = state.log_dir.join("live").join(format!("{}.log", id));
-    if let Ok(content) = tokio::fs::read_to_string(&live_path).await {
+    // Fallback: disk (S3 upload may have failed)
+    if let Ok(content) = tokio::fs::read_to_string(&disk_path).await {
         return Json(json!({
-            "build_id": id,
+            "build_id": build_id,
+            "step_id": step_id,
             "source": "disk",
-            "status": build.status,
             "content": content,
         }));
     }
 
     Json(json!({
-        "build_id": id,
+        "build_id": build_id,
+        "step_id": step_id,
         "source": "none",
-        "status": build.status,
         "content": "",
-        "message": "No logs available yet",
     }))
 }

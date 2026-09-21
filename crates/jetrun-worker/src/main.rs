@@ -67,13 +67,13 @@ async fn main() -> anyhow::Result<()> {
 
         tracing::info!(build_id = %job.build_id, stages = job.stages.len(), "executing build");
 
-        // Create log writer for this build
-        let log_writer = logs::LogWriter::new(&log_dir, job.build_id).await.ok();
+        // Create per-build log directory
+        let build_log_dir = logs::create_build_log_dir(&log_dir, job.build_id).await.ok();
 
         // Mark running
         let _ = store.update_build_status(job.build_id, BuildStatus::Running, None).await;
 
-        let result = execute_build(&store, &job, log_writer.as_ref().map(|w| w.live_path())).await;
+        let result = execute_build(&store, &job, build_log_dir.as_deref()).await;
         let (status, finished) = match &result {
             Ok(()) => (BuildStatus::Success, Some(chrono::Utc::now())),
             Err(_) => (BuildStatus::Failed, Some(chrono::Utc::now())),
@@ -81,12 +81,12 @@ async fn main() -> anyhow::Result<()> {
 
         let _ = store.update_build_status(job.build_id, status, finished).await;
 
-        // Upload log to S3 and cleanup local
-        if let Some(writer) = &log_writer {
+        // Upload step logs to S3 and cleanup local
+        if build_log_dir.is_some() {
             if let Some(s3) = &log_store {
-                match s3.upload(job.build_id, &writer.live_path()).await {
-                    Ok(_) => { let _ = logs::cleanup_live_log(&log_dir, job.build_id).await; }
-                    Err(e) => tracing::warn!(error = %e, "S3 upload failed, log stays on disk"),
+                match s3.upload_build_logs(&log_dir, job.build_id).await {
+                    Ok(_) => { let _ = logs::cleanup_build_logs(&log_dir, job.build_id).await; }
+                    Err(e) => tracing::warn!(error = %e, "S3 upload failed, logs stay on disk"),
                 }
             }
         }
@@ -101,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Execute build: stages in DAG order, update stage/step statuses in DB as they progress
-async fn execute_build(store: &Arc<dyn Store>, job: &BuildJob, log_path: Option<std::path::PathBuf>) -> anyhow::Result<()> {
+async fn execute_build(store: &Arc<dyn Store>, job: &BuildJob, build_log_dir: Option<&std::path::Path>) -> anyhow::Result<()> {
     use jetrun_common::models::{BuildStage, BuildStep};
 
     let stage_idx: HashMap<&str, usize> = job.stages.iter().enumerate()
@@ -148,7 +148,7 @@ async fn execute_build(store: &Arc<dyn Store>, job: &BuildJob, log_path: Option<
                 let _ = store.update_build_stages(job.build_id, &stages).await;
 
                 let start = Instant::now();
-                let result = execute_step(step_job, &job.repo_path, log_path.as_deref()).await;
+                let result = execute_step(step_job, &job.repo_path, build_log_dir).await;
                 let duration = start.elapsed().as_millis() as u64;
 
                 match result {
@@ -184,7 +184,7 @@ async fn execute_build(store: &Arc<dyn Store>, job: &BuildJob, log_path: Option<
 
             done[i] = true;
             progress = true;
-            tracing::info!(stage = %stages[i].name, "✓ stage done");
+            tracing::info!(stage = %stages[i].name, "stage done");
         }
     }
 
@@ -195,25 +195,25 @@ async fn execute_build(store: &Arc<dyn Store>, job: &BuildJob, log_path: Option<
 /// Execute a step — selects executor based on step config:
 ///   image set → Docker (if compiled with --features docker)
 ///   no image  → Linux namespaces (if Linux + feature enabled) or bare sh -c
-async fn execute_step(step: &BuildStepJob, working_dir: &str, log_path: Option<&std::path::Path>) -> anyhow::Result<i32> {
+async fn execute_step(step: &BuildStepJob, working_dir: &str, build_log_dir: Option<&std::path::Path>) -> anyhow::Result<i32> {
     #[cfg(feature = "docker")]
     if let Some(image) = &step.image {
         tracing::info!(step = %step.name, image = %image, "using Docker executor");
     }
 
     #[cfg(all(target_os = "linux", feature = "namespace-isolation"))]
-    return execute_with_logs(step, working_dir, log_path, true).await;
+    return execute_with_logs(step, working_dir, build_log_dir, true).await;
 
     #[cfg(not(all(target_os = "linux", feature = "namespace-isolation")))]
-    return execute_with_logs(step, working_dir, log_path, false).await;
+    return execute_with_logs(step, working_dir, build_log_dir, false).await;
 }
 
-/// Execute a step, writing stdout/stderr to both tracing and an optional log file
+/// Execute a step, writing stdout/stderr to a per-step log file
 #[allow(dead_code)]
 pub async fn execute_with_logs(
     step: &BuildStepJob,
     working_dir: &str,
-    log_path: Option<&std::path::Path>,
+    build_log_dir: Option<&std::path::Path>,
     _use_namespace: bool,
 ) -> anyhow::Result<i32> {
     let start = Instant::now();
@@ -232,10 +232,27 @@ pub async fn execute_with_logs(
         use std::os::unix::process::CommandExt;
         unsafe {
             cmd.pre_exec(|| {
-                let flags = libc::CLONE_NEWPID | libc::CLONE_NEWNS;
-                if libc::unshare(flags) != 0 {
-                    eprintln!("jetrun: unshare failed, running without isolation");
+                // Try user namespace first (unprivileged), then PID + mount
+                let flags_user = libc::CLONE_NEWUSER | libc::CLONE_NEWPID | libc::CLONE_NEWNS;
+                if libc::unshare(flags_user) == 0 {
+                    return Ok(());
                 }
+
+                // Fallback: PID + mount only (needs CAP_SYS_ADMIN)
+                let flags = libc::CLONE_NEWPID | libc::CLONE_NEWNS;
+                if libc::unshare(flags) == 0 {
+                    // Remount /proc for new PID namespace
+                    let _ = libc::mount(
+                        b"proc\0".as_ptr() as *const libc::c_char,
+                        b"/proc\0".as_ptr() as *const libc::c_char,
+                        b"proc\0".as_ptr() as *const libc::c_char,
+                        0,
+                        std::ptr::null(),
+                    );
+                    return Ok(());
+                }
+
+                // Non-fatal: proceed without isolation
                 Ok(())
             });
         }
@@ -245,10 +262,13 @@ pub async fn execute_with_logs(
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
 
-    // Open log file for appending (if provided)
-    let log_file: Option<Arc<tokio::sync::Mutex<tokio::fs::File>>> = match log_path {
-        Some(p) => tokio::fs::OpenOptions::new().create(true).append(true).open(p).await
-            .ok().map(|f| Arc::new(tokio::sync::Mutex::new(f))),
+    // Open per-step log file
+    let log_file: Option<Arc<tokio::sync::Mutex<tokio::fs::File>>> = match build_log_dir {
+        Some(dir) => {
+            let path = logs::step_log_path(dir, step.step_id);
+            tokio::fs::OpenOptions::new().create(true).append(true).open(&path).await
+                .ok().map(|f| Arc::new(tokio::sync::Mutex::new(f)))
+        }
         None => None,
     };
 
@@ -261,7 +281,7 @@ pub async fn execute_with_logs(
             if let Some(lf) = &lf1 {
                 use tokio::io::AsyncWriteExt;
                 let ts = chrono::Utc::now().format("%H:%M:%S%.3f");
-                let formatted = format!("[{}] [{}] [stdout] {}\n", ts, name1, line);
+                let formatted = format!("[{}] [stdout] {}\n", ts, line);
                 let _ = lf.lock().await.write_all(formatted.as_bytes()).await;
             }
         }
@@ -276,7 +296,7 @@ pub async fn execute_with_logs(
             if let Some(lf) = &lf2 {
                 use tokio::io::AsyncWriteExt;
                 let ts = chrono::Utc::now().format("%H:%M:%S%.3f");
-                let formatted = format!("[{}] [{}] [stderr] {}\n", ts, name2, line);
+                let formatted = format!("[{}] [stderr] {}\n", ts, line);
                 let _ = lf.lock().await.write_all(formatted.as_bytes()).await;
             }
         }

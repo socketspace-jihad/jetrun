@@ -18,6 +18,12 @@ import { cn } from "@/lib/utils";
 
 type Tab = "builds" | "config";
 
+interface StepLog {
+  step_id: string;
+  stage_name: string;
+  step_name: string;
+}
+
 export default function PipelineDetailPage() {
   const params = useParams();
   const projectId = params.id as string;
@@ -30,20 +36,65 @@ export default function PipelineDetailPage() {
   const [triggering, setTriggering] = useState(false);
   const [triggerMsg, setTriggerMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [copied, setCopied] = useState("");
+
+  // Per-step log state
+  const [activeStepId, setActiveStepId] = useState<string | null>(null);
+  const [activeStepName, setActiveStepName] = useState<string>("");
   const [logLines, setLogLines] = useState<{ line_number: number; stream: "stdout" | "stderr" | "system"; content: string; timestamp: string }[]>([]);
   const [logSource, setLogSource] = useState<string>("");
-  const [showLogs, setShowLogs] = useState(false);
+
+  // Polling refs
+  const buildPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const logPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchLogs = useCallback(async (buildId: string) => {
+  const reload = useCallback(async () => {
     try {
-      const res = await api.getBuildLogs(buildId);
+      const [proj, buildRes] = await Promise.all([
+        api.getProject(projectId),
+        api.listProjectBuilds(projectId),
+      ]);
+      setProject(proj);
+      const buildList = (buildRes.builds as any[]) || [];
+      setBuilds(buildList);
+
+      // Update selectedBuild with fresh data (keep selection by id)
+      setSelectedBuild((prev: any) => {
+        if (!prev && buildList.length > 0) return buildList[0];
+        if (prev) {
+          const updated = buildList.find((b: any) => b.id === prev.id);
+          return updated || prev;
+        }
+        return prev;
+      });
+    } catch {}
+  }, [projectId]);
+
+  // Initial load
+  useEffect(() => {
+    if (DEMO_ENABLED || !projectId) { setLoading(false); return; }
+    reload().finally(() => setLoading(false));
+  }, [projectId, reload]);
+
+  // Auto-poll builds when any build is running/queued
+  useEffect(() => {
+    if (buildPollRef.current) { clearInterval(buildPollRef.current); buildPollRef.current = null; }
+    const hasActive = builds.some((b: any) => b.status === "running" || b.status === "queued");
+    if (hasActive) {
+      buildPollRef.current = setInterval(reload, 3000);
+    }
+    return () => { if (buildPollRef.current) clearInterval(buildPollRef.current); };
+  }, [builds, reload]);
+
+  // Fetch step logs
+  const fetchStepLogs = useCallback(async (buildId: string, stepId: string) => {
+    try {
+      const res = await api.getStepLogs(buildId, stepId);
       setLogSource(res.source);
       if (!res.content) { setLogLines([]); return; }
       const lines = res.content.split("\n").filter(Boolean).map((line, i) => {
-        const match = line.match(/^\[([^\]]+)\]\s*\[([^\]]+)\]\s*\[(stdout|stderr)\]\s*(.*)/);
+        const match = line.match(/^\[([^\]]+)\]\s*\[(stdout|stderr)\]\s*(.*)/);
         if (match) {
-          return { line_number: i + 1, timestamp: match[1], stream: match[3] as "stdout" | "stderr", content: match[4] };
+          return { line_number: i + 1, timestamp: match[1], stream: match[2] as "stdout" | "stderr", content: match[3] };
         }
         return { line_number: i + 1, timestamp: "", stream: "stdout" as const, content: line };
       });
@@ -53,34 +104,16 @@ export default function PipelineDetailPage() {
     }
   }, []);
 
-  // Poll logs for running builds
+  // Poll step logs for running builds
   useEffect(() => {
     if (logPollRef.current) { clearInterval(logPollRef.current); logPollRef.current = null; }
-    if (!selectedBuild || !showLogs) return;
-    fetchLogs(selectedBuild.id);
+    if (!selectedBuild || !activeStepId) return;
+    fetchStepLogs(selectedBuild.id, activeStepId);
     if (selectedBuild.status === "running" || selectedBuild.status === "queued") {
-      logPollRef.current = setInterval(() => fetchLogs(selectedBuild.id), 3000);
+      logPollRef.current = setInterval(() => fetchStepLogs(selectedBuild.id, activeStepId), 2000);
     }
     return () => { if (logPollRef.current) clearInterval(logPollRef.current); };
-  }, [selectedBuild?.id, selectedBuild?.status, showLogs, fetchLogs]);
-
-  const reload = async () => {
-    try {
-      const [proj, buildRes] = await Promise.all([
-        api.getProject(projectId),
-        api.listProjectBuilds(projectId),
-      ]);
-      setProject(proj);
-      const buildList = (buildRes.builds as any[]) || [];
-      setBuilds(buildList);
-      if (buildList.length > 0 && !selectedBuild) setSelectedBuild(buildList[0]);
-    } catch {}
-  };
-
-  useEffect(() => {
-    if (DEMO_ENABLED || !projectId) { setLoading(false); return; }
-    reload().finally(() => setLoading(false));
-  }, [projectId]);
+  }, [selectedBuild?.id, selectedBuild?.status, activeStepId, fetchStepLogs]);
 
   const handleTrigger = async () => {
     setTriggering(true);
@@ -88,7 +121,7 @@ export default function PipelineDetailPage() {
     try {
       await api.triggerBuild(projectId);
       setTriggerMsg({ type: "success", text: "Build triggered! Syncing..." });
-      setTimeout(() => reload(), 5000);
+      setTimeout(() => reload(), 3000);
     } catch (err) {
       setTriggerMsg({ type: "error", text: err instanceof Error ? err.message : "Failed" });
     }
@@ -99,6 +132,24 @@ export default function PipelineDetailPage() {
     navigator.clipboard.writeText(text);
     setCopied(key);
     setTimeout(() => setCopied(""), 2000);
+  };
+
+  const handleStepClick = (stepId: string, stepName: string) => {
+    if (activeStepId === stepId) {
+      setActiveStepId(null);
+      setActiveStepName("");
+      setLogLines([]);
+    } else {
+      setActiveStepId(stepId);
+      setActiveStepName(stepName);
+    }
+  };
+
+  const handleBuildSelect = (build: any) => {
+    setSelectedBuild(build);
+    setActiveStepId(null);
+    setActiveStepName("");
+    setLogLines([]);
   };
 
   if (loading) return <div className="p-8 flex items-center justify-center h-64"><Loader2 className="w-8 h-8 text-nb-gray animate-spin" /></div>;
@@ -165,7 +216,7 @@ export default function PipelineDetailPage() {
         })}
       </div>
 
-      {/* ── Builds Tab ── */}
+      {/* Builds Tab */}
       {tab === "builds" && (
         <div className="grid grid-cols-[1fr_320px] gap-6">
           <div className="space-y-6">
@@ -186,10 +237,21 @@ export default function PipelineDetailPage() {
                             <StatusBadge status={stage.status} />
                           </div>
                           {stage.steps?.map((step: any) => (
-                            <div key={step.id || step.name} className="flex items-center justify-between text-[11px] mt-1">
-                              <span className="text-nb-gray font-medium truncate mr-2">{step.name}</span>
+                            <button
+                              key={step.id || step.name}
+                              onClick={() => handleStepClick(step.id, step.name)}
+                              className={cn(
+                                "w-full flex items-center justify-between text-[11px] mt-1 px-2 py-1 rounded-lg transition-colors",
+                                activeStepId === step.id
+                                  ? "bg-nb-yellow/20 border border-nb-yellow/40"
+                                  : "hover:bg-white/50"
+                              )}
+                            >
+                              <span className="text-nb-gray font-medium truncate mr-2 flex items-center gap-1">
+                                <Terminal className="w-3 h-3 shrink-0" />{step.name}
+                              </span>
                               <StatusBadge status={step.status} />
-                            </div>
+                            </button>
                           ))}
                         </div>
                         {i < selectedBuild.stages.length - 1 && <ChevronRight className="w-5 h-5 text-nb-gray shrink-0" />}
@@ -205,22 +267,19 @@ export default function PipelineDetailPage() {
               </Card>
             )}
 
-            {/* Build Logs */}
-            {selectedBuild && (
+            {/* Per-step log viewer */}
+            {activeStepId && (
               <div>
-                <button
-                  onClick={() => setShowLogs(!showLogs)}
-                  className="flex items-center gap-2 mb-3 text-[12px] font-black uppercase tracking-wider text-nb-gray hover:text-nb-black transition-colors"
-                >
-                  <Terminal className="w-4 h-4" />
-                  {showLogs ? "Hide Logs" : "Show Logs"}
+                <div className="flex items-center gap-2 mb-3">
+                  <Terminal className="w-4 h-4 text-nb-gray" />
+                  <span className="text-[12px] font-black uppercase tracking-wider text-nb-gray">{activeStepName}</span>
                   {logSource === "live" && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-nb-green/15 text-nb-green text-[9px] font-black">
                       <span className="w-1.5 h-1.5 rounded-full bg-nb-green animate-pulse" />LIVE
                     </span>
                   )}
-                </button>
-                {showLogs && <BuildLogViewer logs={logLines} autoScroll={logSource === "live"} />}
+                </div>
+                <BuildLogViewer logs={logLines} autoScroll={logSource === "live"} />
               </div>
             )}
 
@@ -245,7 +304,7 @@ export default function PipelineDetailPage() {
               ) : (
                 <div className="space-y-2 max-h-[500px] overflow-y-auto custom-scrollbar">
                   {builds.map((b: any) => (
-                    <button key={b.id} onClick={() => setSelectedBuild(b)}
+                    <button key={b.id} onClick={() => handleBuildSelect(b)}
                       className={cn("w-full text-left px-3 py-2.5 rounded-xl transition-all",
                         selectedBuild?.id === b.id ? "bg-nb-yellow/15 border border-nb-yellow/40" : "hover:bg-nb-bg border border-transparent"
                       )}>
@@ -267,10 +326,9 @@ export default function PipelineDetailPage() {
         </div>
       )}
 
-      {/* ── Configuration Tab ── */}
+      {/* Configuration Tab */}
       {tab === "config" && (
         <div className="grid grid-cols-2 gap-6">
-          {/* Project Info */}
           <Card>
             <CardTitle className="flex items-center gap-2 mb-4"><Settings className="w-4 h-4" />Project Info</CardTitle>
             <CardContent>
@@ -295,7 +353,6 @@ export default function PipelineDetailPage() {
             </CardContent>
           </Card>
 
-          {/* Webhook Setup */}
           <Card>
             <CardTitle className="flex items-center gap-2 mb-4"><Webhook className="w-4 h-4" />Webhook Setup</CardTitle>
             <CardContent>
