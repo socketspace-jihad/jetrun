@@ -63,9 +63,23 @@ async fn main() -> anyhow::Result<()> {
 
         match &job {
             RepoJob::Sync { project_id, repo_url, branch, commit_sha, trigger, .. } => {
+                // If repo_url is empty, look it up from the database
+                let actual_repo_url = if repo_url.is_empty() {
+                    match store.find_project_by_id(*project_id).await {
+                        Ok(Some(project)) => project.repo_url,
+                        _ => {
+                            tracing::error!(project_id = %project_id, "project not found in DB, skipping");
+                            let _ = broker.ack(&msg).await;
+                            continue;
+                        }
+                    }
+                } else {
+                    repo_url.clone()
+                };
+
                 tracing::info!(
                     project_id = %project_id,
-                    repo_url = %repo_url,
+                    repo_url = %actual_repo_url,
                     branch = %branch,
                     trigger = %trigger,
                     "processing sync job"
@@ -75,7 +89,7 @@ async fn main() -> anyhow::Result<()> {
                     &store,
                     &repos_dir,
                     *project_id,
-                    repo_url,
+                    &actual_repo_url,
                     branch,
                     commit_sha.as_deref(),
                     trigger,
