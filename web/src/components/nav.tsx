@@ -17,6 +17,7 @@ import {
   Building2,
   ChevronRight,
   Check,
+  Cpu,
 } from "lucide-react";
 import { UserAvatar } from "@/components/user-avatar";
 import { useState } from "react";
@@ -37,6 +38,7 @@ const settingsSubNav = [
   { href: "/settings/roles", icon: Shield, label: "Roles & Permissions" },
   { href: "/settings/secrets", icon: Key, label: "Secrets" },
   { href: "/settings/api-keys", icon: Key, label: "API Keys" },
+  { href: "/settings/workers", icon: Cpu, label: "Workers" },
 ];
 
 export function Nav() {

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { createStepLogSocket } from "@/lib/ws";
 import { DEMO_ENABLED } from "@/lib/demo";
 import { cn } from "@/lib/utils";
 
@@ -85,35 +86,53 @@ export default function PipelineDetailPage() {
     return () => { if (buildPollRef.current) clearInterval(buildPollRef.current); };
   }, [builds, reload]);
 
-  // Fetch step logs
-  const fetchStepLogs = useCallback(async (buildId: string, stepId: string) => {
-    try {
-      const res = await api.getStepLogs(buildId, stepId);
-      setLogSource(res.source);
-      if (!res.content) { setLogLines([]); return; }
-      const lines = res.content.split("\n").filter(Boolean).map((line, i) => {
-        const match = line.match(/^\[([^\]]+)\]\s*\[(stdout|stderr)\]\s*(.*)/);
-        if (match) {
-          return { line_number: i + 1, timestamp: match[1], stream: match[2] as "stdout" | "stderr", content: match[3] };
-        }
-        return { line_number: i + 1, timestamp: "", stream: "stdout" as const, content: line };
-      });
-      setLogLines(lines);
-    } catch {
-      setLogLines([]);
+  const parseLine = useCallback((raw: string, idx: number) => {
+    const match = raw.match(/^\[([^\]]+)\]\s*\[(stdout|stderr)\]\s*(.*)/);
+    if (match) {
+      return { line_number: idx, timestamp: match[1], stream: match[2] as "stdout" | "stderr", content: match[3] };
     }
+    return { line_number: idx, timestamp: "", stream: "stdout" as const, content: raw };
   }, []);
 
-  // Poll step logs for running builds
+  // Step logs: WebSocket for running builds, REST for completed
+  const wsRef = useRef<WebSocket | null>(null);
+
   useEffect(() => {
+    // Cleanup previous connection
+    if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
     if (logPollRef.current) { clearInterval(logPollRef.current); logPollRef.current = null; }
     if (!selectedBuild || !activeStepId) return;
-    fetchStepLogs(selectedBuild.id, activeStepId);
-    if (selectedBuild.status === "running" || selectedBuild.status === "queued") {
-      logPollRef.current = setInterval(() => fetchStepLogs(selectedBuild.id, activeStepId), 2000);
+
+    const isLive = selectedBuild.status === "running" || selectedBuild.status === "queued";
+
+    if (isLive) {
+      // WebSocket: real-time streaming, no polling overhead
+      setLogSource("live");
+      let lineCount = 0;
+      const ws = createStepLogSocket(selectedBuild.id, activeStepId, (raw) => {
+        lineCount++;
+        const line = parseLine(raw, lineCount);
+        setLogLines((prev) => [...prev, line]);
+      }, () => {
+        setLogSource("closed");
+      });
+      wsRef.current = ws;
+    } else {
+      // REST: completed builds, fetch once from S3/disk
+      setLogSource("s3");
+      api.getStepLogs(selectedBuild.id, activeStepId).then((res) => {
+        if (!res.content) { setLogLines([]); return; }
+        const lines = res.content.split("\n").filter(Boolean).map((l, i) => parseLine(l, i + 1));
+        setLogLines(lines);
+        setLogSource(res.source);
+      }).catch(() => setLogLines([]));
     }
-    return () => { if (logPollRef.current) clearInterval(logPollRef.current); };
-  }, [selectedBuild?.id, selectedBuild?.status, activeStepId, fetchStepLogs]);
+
+    return () => {
+      if (wsRef.current) { wsRef.current.close(); wsRef.current = null; }
+      if (logPollRef.current) { clearInterval(logPollRef.current); }
+    };
+  }, [selectedBuild?.id, selectedBuild?.status, activeStepId, parseLine]);
 
   const handleTrigger = async () => {
     setTriggering(true);

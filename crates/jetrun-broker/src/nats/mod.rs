@@ -55,21 +55,21 @@ impl MessageBroker for NatsBroker {
             .await
             .map_err(|e| BrokerError::Subscribe(e.to_string()))?;
 
-        // Delete any stale consumer from previous crash loops
+        // Get-or-create durable consumer — safe for multiple workers.
+        // Multiple workers sharing the same consumer = competing consumer group:
+        // NATS delivers each message to exactly one worker.
         let consumer_name = subject.replace('.', "-");
-        let _ = stream.delete_consumer(&consumer_name).await;
-
-        // Create fresh consumer
         let consumer = stream
-            .create_consumer(jetstream::consumer::pull::Config {
+            .get_or_create_consumer(&consumer_name, jetstream::consumer::pull::Config {
                 durable_name: Some(consumer_name.clone()),
                 filter_subject: subject.to_string(),
                 ack_policy: jetstream::consumer::AckPolicy::Explicit,
-                ack_wait: std::time::Duration::from_secs(120),
+                ack_wait: std::time::Duration::from_secs(300),
+                max_deliver: 3,
                 ..Default::default()
             })
             .await
-            .map_err(|e| BrokerError::Subscribe(format!("create consumer: {}", e)))?;
+            .map_err(|e| BrokerError::Subscribe(format!("consumer: {}", e)))?;
 
         let messages = consumer
             .messages()

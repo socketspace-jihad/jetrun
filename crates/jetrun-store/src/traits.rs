@@ -144,14 +144,23 @@ pub trait GroupRepo: Send + Sync {
     async fn get_group_role(&self, team_id: Uuid) -> Result<Option<Role>, StoreError>;
 }
 
+// ── System Settings ──
+
+#[async_trait]
+pub trait SettingsRepo: Send + Sync {
+    async fn get_setting(&self, key: &str) -> Result<Option<String>, StoreError>;
+    async fn set_setting(&self, key: &str, value: &str) -> Result<(), StoreError>;
+    async fn get_all_settings(&self, prefix: &str) -> Result<std::collections::HashMap<String, String>, StoreError>;
+}
+
 // ── Combined Store ──
 
 pub trait Store:
-    UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + SecretRepo + ProjectRepo + PipelineRepo + BuildRepo + GroupRepo
+    UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + SecretRepo + ProjectRepo + PipelineRepo + BuildRepo + GroupRepo + SettingsRepo
 {
 }
 
 impl<T> Store for T where
-    T: UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + SecretRepo + ProjectRepo + PipelineRepo + BuildRepo + GroupRepo
+    T: UserRepo + OrgRepo + RoleRepo + SessionRepo + ApiKeyRepo + SecretRepo + ProjectRepo + PipelineRepo + BuildRepo + GroupRepo + SettingsRepo
 {
 }

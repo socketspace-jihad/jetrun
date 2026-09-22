@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Path, State},
-    routing::{get, post},
+    routing::{get, post, put},
     Json, Router,
 };
 use chrono::Utc;
@@ -71,6 +71,7 @@ impl LogStoreClient {
 
 pub mod secrets;
 pub mod webhooks;
+pub mod ws;
 
 pub fn api_routes() -> Router<AppState> {
     Router::new()
@@ -81,6 +82,10 @@ pub fn api_routes() -> Router<AppState> {
         .route("/builds/{id}", get(get_build))
         .route("/builds/{id}/logs", get(get_build_log_index))
         .route("/builds/{id}/logs/{step_id}", get(get_step_logs))
+        // WebSocket: live log streaming
+        .route("/ws/builds/{build_id}/logs/{step_id}", get(ws::ws_step_logs))
+        // Settings
+        .route("/settings/worker", get(get_worker_settings).put(update_worker_settings))
         // Secrets
         .nest("/secrets", secrets::admin_routes())
         .nest("/secrets", secrets::names_route())
@@ -369,4 +374,30 @@ async fn get_step_logs(
         "source": "none",
         "content": "",
     }))
+}
+
+// ── Worker Settings ──
+
+async fn get_worker_settings(State(state): State<AppState>) -> Json<Value> {
+    let settings = state.store.get_all_settings("worker.").await.unwrap_or_default();
+    Json(json!({ "settings": settings }))
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateWorkerSettings {
+    settings: std::collections::HashMap<String, String>,
+}
+
+async fn update_worker_settings(
+    State(state): State<AppState>,
+    Json(req): Json<UpdateWorkerSettings>,
+) -> Json<Value> {
+    for (key, value) in &req.settings {
+        if !key.starts_with("worker.") { continue; }
+        if let Err(e) = state.store.set_setting(key, value).await {
+            tracing::error!(key = %key, error = %e, "failed to update setting");
+            return Json(json!({ "error": format!("Failed to update {}", key) }));
+        }
+    }
+    Json(json!({ "updated": true }))
 }

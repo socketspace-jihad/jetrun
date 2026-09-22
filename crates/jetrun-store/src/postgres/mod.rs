@@ -8,6 +8,7 @@ mod api_keys;
 mod secrets;
 mod pipelines;
 mod builds;
+mod settings;
 
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;

@@ -21,6 +21,7 @@ Environment=HOME=/opt/jetrun/data/home
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin:/opt/jetrun/data/home/go/bin
 Environment=GOPATH=/opt/jetrun/data/home/go
 Environment=GOMODCACHE=/opt/jetrun/data/home/go/pkg/mod
+Environment=GOCACHE=/opt/jetrun/data/home/.cache/go-build
 
 # Hardening — relaxed enough for namespace isolation + build tools
 ProtectSystem=full

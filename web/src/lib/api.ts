@@ -69,6 +69,15 @@ export const api = {
   retryBuild: (id: string) =>
     fetchApi(`/api/v1/builds/${id}/retry`, { method: "POST" }),
 
+  // Settings
+  getWorkerSettings: () =>
+    fetchApi<{ settings: Record<string, string> }>("/api/v1/settings/worker"),
+  updateWorkerSettings: (settings: Record<string, string>) =>
+    fetchApi<{ updated: boolean }>("/api/v1/settings/worker", {
+      method: "PUT",
+      body: JSON.stringify({ settings }),
+    }),
+
   // Cache
   getCacheStats: () => fetchApi<unknown>("/api/v1/cache/stats"),
   purgeCache: () => fetchApi("/api/v1/cache", { method: "DELETE" }),
