@@ -41,7 +41,7 @@ export default function WorkerSettingsPage() {
     setSaving(true);
     setSaved(false);
     try {
-      await api.updateWorkerSettings(settings);
+      await api.updateWorkerSettings(settings as Record<string, string>);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch {}
