@@ -7,14 +7,7 @@ import { Cpu, HardDrive, Database, Zap, Save, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-interface WorkerSettings {
-  "worker.max_parallel": string;
-  "worker.tmpfs_enabled": string;
-  "worker.tmpfs_size_mb": string;
-  "worker.dep_cache_enabled": string;
-  "worker.cpu_pinning_enabled": string;
-  "worker.memory_limit_mb": string;
-}
+type WorkerSettings = Record<string, string>;
 
 const defaults: WorkerSettings = {
   "worker.max_parallel": "0",
@@ -41,18 +34,18 @@ export default function WorkerSettingsPage() {
     setSaving(true);
     setSaved(false);
     try {
-      await api.updateWorkerSettings(settings as Record<string, string>);
+      await api.updateWorkerSettings(settings);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch {}
     setSaving(false);
   };
 
-  const toggle = (key: keyof WorkerSettings) => {
+  const toggle = (key: string) => {
     setSettings((s) => ({ ...s, [key]: s[key] === "true" ? "false" : "true" }));
   };
 
-  const setNum = (key: keyof WorkerSettings, value: string) => {
+  const setNum = (key: string, value: string) => {
     setSettings((s) => ({ ...s, [key]: value }));
   };
 
