@@ -17,6 +17,7 @@ use jetrun_common::models::{BuildStatus, BuildStage, BuildStep, StageConfig, Ste
 use jetrun_engine::DagScheduler;
 use jetrun_store::traits::Store;
 
+pub mod artifacts;
 mod executor;
 mod log_stream;
 pub mod logs;
@@ -156,6 +157,7 @@ fn stage_jobs_to_configs(stages: &[BuildStageJob]) -> Vec<StageConfig> {
         steps: s.steps.iter().map(step_job_to_config).collect(),
         matrix: None,
         condition: None,
+        artifacts: None,
     }).collect()
 }
 
@@ -359,6 +361,19 @@ async fn execute_stage(
         s[stage_idx].finished_at = Some(chrono::Utc::now());
         s[stage_idx].status = if stage_failed { BuildStatus::Failed } else { BuildStatus::Success };
         let _ = store.update_build_stages(job.build_id, &s).await;
+    }
+
+    // Collect artifacts before workspace cleanup (only on success)
+    if !stage_failed {
+        if let Some(artifact) = &job.stages[stage_idx].artifacts {
+            let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/opt/jetrun/data".into());
+            let _ = artifacts::collect(
+                std::path::Path::new(&data_dir),
+                job.build_id,
+                std::path::Path::new(workspace),
+                artifact,
+            ).await;
+        }
     }
 
     if stage_failed {

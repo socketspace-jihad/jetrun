@@ -47,6 +47,9 @@ pub struct StageConfig {
     pub matrix: Option<MatrixConfig>,
     #[serde(default)]
     pub condition: Option<String>,
+    /// Collect artifacts after stage completes
+    #[serde(default)]
+    pub artifacts: Option<ArtifactConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

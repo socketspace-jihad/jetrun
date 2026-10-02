@@ -120,6 +120,7 @@ mod tests {
             }],
             matrix: None,
             condition: None,
+            artifacts: None,
         }
     }
 

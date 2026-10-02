@@ -84,6 +84,9 @@ pub fn api_routes() -> Router<AppState> {
         .route("/builds/{id}/logs/{step_id}", get(get_step_logs))
         // WebSocket: live log streaming
         .route("/ws/builds/{build_id}/logs/{step_id}", get(ws::ws_step_logs))
+        // Artifacts
+        .route("/builds/{id}/artifacts", get(list_artifacts))
+        .route("/builds/{id}/artifacts/{name}/{*path}", get(download_artifact))
         // Settings
         .route("/settings/worker", get(get_worker_settings).put(update_worker_settings))
         // Secrets
@@ -400,4 +403,69 @@ async fn update_worker_settings(
         }
     }
     Json(json!({ "updated": true }))
+}
+
+// ── Artifacts ──
+
+async fn list_artifacts(
+    State(state): State<AppState>,
+    Path(build_id): Path<Uuid>,
+) -> Json<Value> {
+    let artifact_dir = state.log_dir.parent().unwrap_or(&state.log_dir).join("artifacts").join(build_id.to_string());
+    let mut artifacts = Vec::new();
+
+    if let Ok(mut dir) = tokio::fs::read_dir(&artifact_dir).await {
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            if !entry.path().is_dir() { continue; }
+            let name = entry.file_name().to_string_lossy().to_string();
+            let mut files = Vec::new();
+            collect_files(&entry.path(), &entry.path(), &mut files).await;
+            artifacts.push(json!({ "name": name, "files": files }));
+        }
+    }
+
+    Json(json!({ "build_id": build_id, "artifacts": artifacts }))
+}
+
+async fn collect_files(base: &std::path::Path, current: &std::path::Path, out: &mut Vec<String>) {
+    let mut dir = match tokio::fs::read_dir(current).await {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        let p = entry.path();
+        if p.is_file() {
+            let rel = p.strip_prefix(base).unwrap_or(&p);
+            out.push(rel.to_string_lossy().to_string());
+        } else if p.is_dir() {
+            Box::pin(collect_files(base, &p, out)).await;
+        }
+    }
+}
+
+async fn download_artifact(
+    State(state): State<AppState>,
+    Path((build_id, name, file_path)): Path<(Uuid, String, String)>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    use axum::http::StatusCode;
+
+    let data_dir = state.log_dir.parent().unwrap_or(&state.log_dir);
+    let path = data_dir.join("artifacts").join(build_id.to_string()).join(&name).join(&file_path);
+
+    match tokio::fs::read(&path).await {
+        Ok(bytes) => {
+            let filename = std::path::Path::new(&file_path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy();
+
+            axum::response::Response::builder()
+                .header("Content-Type", "application/octet-stream")
+                .header("Content-Disposition", format!("attachment; filename=\"{}\"", filename))
+                .body(axum::body::Body::from(bytes))
+                .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
 }

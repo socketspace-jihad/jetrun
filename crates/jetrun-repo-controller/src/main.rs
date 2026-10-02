@@ -168,6 +168,10 @@ async fn process_sync(
             name: s.name.clone(),
             depends_on: s.depends_on.clone(),
             steps: step_jobs,
+            artifacts: s.artifacts.as_ref().map(|a| jetrun_broker::types::ArtifactInfo {
+                name: a.name.clone(),
+                paths: a.paths.clone(),
+            }),
         });
 
         BuildStage {

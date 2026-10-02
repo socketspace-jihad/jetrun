@@ -29,6 +29,7 @@ chrono = { workspace = true }
 anyhow = { workspace = true }
 futures = { workspace = true }
 libc = { workspace = true }
+glob = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 aws-config = { workspace = true }
 

@@ -56,6 +56,14 @@ pub struct BuildStageJob {
     pub name: String,
     pub depends_on: Vec<String>,
     pub steps: Vec<BuildStepJob>,
+    #[serde(default)]
+    pub artifacts: Option<ArtifactInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactInfo {
+    pub name: String,
+    pub paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

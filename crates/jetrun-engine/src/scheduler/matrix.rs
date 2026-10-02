@@ -104,6 +104,7 @@ mod tests {
                 ])],
             }),
             condition: None,
+            artifacts: None,
         };
 
         let expanded = expand_matrix(&stage);
@@ -129,6 +130,7 @@ mod tests {
             }],
             matrix: None,
             condition: None,
+            artifacts: None,
         };
 
         let expanded = expand_matrix(&stage);
