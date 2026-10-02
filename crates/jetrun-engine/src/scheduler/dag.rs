@@ -107,12 +107,14 @@ mod tests {
         StageConfig {
             name: name.into(),
             depends_on: depends_on.into_iter().map(String::from).collect(),
+            image: None,
             steps: vec![StepConfig {
                 name: "step".into(),
                 image: None,
                 run: "echo hello".into(),
                 env: HashMap::new(),
                 timeout_minutes: None,
+                parallel: false,
                 cache: None,
                 artifacts: None,
             }],

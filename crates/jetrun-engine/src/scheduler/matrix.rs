@@ -82,12 +82,14 @@ mod tests {
         let stage = StageConfig {
             name: "test".into(),
             depends_on: vec![],
+            image: None,
             steps: vec![StepConfig {
                 name: "Run on {{ matrix.os }}".into(),
                 image: None,
                 run: "echo {{ matrix.os }} {{ matrix.rust }}".into(),
                 env: HashMap::new(),
                 timeout_minutes: None,
+                parallel: false,
                 cache: None,
                 artifacts: None,
             }],
@@ -114,12 +116,14 @@ mod tests {
         let stage = StageConfig {
             name: "build".into(),
             depends_on: vec![],
+            image: None,
             steps: vec![StepConfig {
                 name: "compile".into(),
                 image: None,
                 run: "cargo build".into(),
                 env: HashMap::new(),
                 timeout_minutes: None,
+                parallel: false,
                 cache: None,
                 artifacts: None,
             }],

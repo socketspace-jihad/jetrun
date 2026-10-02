@@ -66,6 +66,8 @@ pub struct BuildStepJob {
     pub image: Option<String>,
     pub env: Vec<(String, String)>,
     pub timeout_secs: Option<u32>,
+    #[serde(default)]
+    pub parallel: bool,
 }
 
 impl BuildJob {

@@ -39,6 +39,9 @@ pub struct StageConfig {
     pub name: String,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    /// Default Docker image for all steps in this stage (steps can override)
+    #[serde(default)]
+    pub image: Option<String>,
     pub steps: Vec<StepConfig>,
     #[serde(default)]
     pub matrix: Option<MatrixConfig>,
@@ -49,6 +52,7 @@ pub struct StageConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepConfig {
     pub name: String,
+    /// Docker image (overrides stage-level image)
     #[serde(default)]
     pub image: Option<String>,
     pub run: String,
@@ -56,6 +60,9 @@ pub struct StepConfig {
     pub env: HashMap<String, String>,
     #[serde(default)]
     pub timeout_minutes: Option<u32>,
+    /// Run this step in parallel with adjacent parallel steps
+    #[serde(default)]
+    pub parallel: bool,
     #[serde(default)]
     pub cache: Option<StepCacheConfig>,
     #[serde(default)]

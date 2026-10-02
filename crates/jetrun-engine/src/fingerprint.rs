@@ -182,6 +182,7 @@ mod tests {
             run: run.into(),
             env: HashMap::new(),
             timeout_minutes: None,
+            parallel: false,
             cache: None,
             artifacts: None,
         }

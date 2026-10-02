@@ -150,13 +150,16 @@ async fn process_sync(
         let stage_id = uuid::Uuid::new_v4();
         let step_jobs: Vec<BuildStepJob> = s.steps.iter().map(|step| {
             let step_id = uuid::Uuid::new_v4();
+            // Step image inherits from stage if not set
+            let image = step.image.clone().or_else(|| s.image.clone());
             BuildStepJob {
                 step_id,
                 name: step.name.clone(),
                 command: step.run.clone(),
-                image: step.image.clone(),
+                image,
                 env: step.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
                 timeout_secs: step.timeout_minutes.map(|m| m * 60),
+                parallel: step.parallel,
             }
         }).collect();
 

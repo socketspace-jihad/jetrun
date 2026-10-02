@@ -181,13 +181,13 @@ function ToggleRow({ label, description, enabled, onToggle }: {
       <button
         onClick={onToggle}
         className={cn(
-          "w-12 h-7 rounded-full border-2 border-nb-black transition-colors relative shrink-0",
+          "w-11 h-6 rounded-full border-2 border-nb-black transition-colors relative shrink-0",
           enabled ? "bg-nb-yellow" : "bg-nb-light"
         )}
       >
         <span className={cn(
-          "absolute top-0.5 w-5 h-5 rounded-full bg-nb-black transition-transform",
-          enabled ? "translate-x-5" : "translate-x-0.5"
+          "absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-nb-black transition-transform",
+          enabled ? "translate-x-[18px]" : "translate-x-0"
         )} />
       </button>
     </div>

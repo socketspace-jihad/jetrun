@@ -152,6 +152,7 @@ fn stage_jobs_to_configs(stages: &[BuildStageJob]) -> Vec<StageConfig> {
     stages.iter().map(|s| StageConfig {
         name: s.name.clone(),
         depends_on: s.depends_on.clone(),
+        image: None,
         steps: s.steps.iter().map(step_job_to_config).collect(),
         matrix: None,
         condition: None,
@@ -165,6 +166,7 @@ fn step_job_to_config(step: &BuildStepJob) -> StepConfig {
         image: step.image.clone(),
         env: step.env.iter().cloned().collect(),
         timeout_minutes: step.timeout_secs.map(|s| s / 60),
+        parallel: step.parallel,
         cache: None,
         artifacts: None,
     }
@@ -300,91 +302,54 @@ async fn execute_stage(
     }
 
     let mut stage_failed = false;
+    let steps = &job.stages[stage_idx].steps;
 
-    for (step_idx, step_job) in job.stages[stage_idx].steps.iter().enumerate() {
-        // Mark step running
-        {
-            let mut s = stages.write().await;
-            s[stage_idx].steps[step_idx].status = BuildStatus::Running;
-            s[stage_idx].steps[step_idx].started_at = Some(chrono::Utc::now());
-            let _ = store.update_build_stages(job.build_id, &s).await;
-        }
+    // Group steps: sequential steps run alone, adjacent parallel steps run concurrently
+    let mut i = 0;
+    while i < steps.len() && !stage_failed {
+        if steps[i].parallel {
+            // Collect adjacent parallel steps
+            let batch_start = i;
+            while i < steps.len() && steps[i].parallel { i += 1; }
 
-        let start = Instant::now();
+            // Run parallel batch via JoinSet
+            let mut join_set = JoinSet::new();
+            for step_idx in batch_start..i {
+                let store = Arc::clone(store);
+                let job = job.clone();
+                let stages = Arc::clone(stages);
+                let ws = workspace.to_string();
+                let de = dep_env.to_vec();
+                let ld = build_log_dir.map(|p| p.to_owned());
+                let cg = cgroup.map(|p| p.to_owned());
 
-        // ── Fingerprint check: skip if content-hash matches previous successful run ──
-        let step_config = step_job_to_config(step_job);
-        let repo_path = std::path::Path::new(workspace);
-        let input_patterns: Vec<String> = step_config.cache
-            .as_ref()
-            .map(|c| c.paths.clone())
-            .unwrap_or_default();
+                join_set.spawn(async move {
+                    run_single_step(
+                        &store, &job, stage_idx, step_idx, &stages,
+                        &ws, &de, ld.as_deref(), cg.as_deref(),
+                    ).await
+                });
+            }
 
-        let fingerprint = jetrun_engine::compute_fingerprint(&step_config, repo_path, &input_patterns)
-            .await
-            .ok();
-
-        let cache_hit = match &fingerprint {
-            Some(fp) => store.check_fingerprint(job.project_id, &fp.hash).await.unwrap_or(false),
-            None => false,
-        };
-
-        if cache_hit {
-            let duration = start.elapsed().as_millis() as u64;
-            let fp = fingerprint.as_ref().unwrap();
-            tracing::info!(
-                step = %step_job.name,
-                fingerprint = %fp.hash[..12],
-                "cache hit — skipping step"
-            );
-
-            let mut s = stages.write().await;
-            s[stage_idx].steps[step_idx].status = BuildStatus::Skipped;
-            s[stage_idx].steps[step_idx].exit_code = Some(0);
-            s[stage_idx].steps[step_idx].duration_ms = Some(duration);
-            s[stage_idx].steps[step_idx].finished_at = Some(chrono::Utc::now());
-            s[stage_idx].steps[step_idx].cache_hit = true;
-            s[stage_idx].steps[step_idx].fingerprint = Some(fp.hash.clone());
-            let _ = store.update_build_stages(job.build_id, &s).await;
-            continue;
-        }
-
-        // ── Execute step ──
-        let result = execute_step(step_job, workspace, build_log_dir, dep_env, cgroup).await;
-        let duration = start.elapsed().as_millis() as u64;
-
-        match result {
-            Ok(code) => {
-                let mut s = stages.write().await;
-                s[stage_idx].steps[step_idx].exit_code = Some(code);
-                s[stage_idx].steps[step_idx].duration_ms = Some(duration);
-                s[stage_idx].steps[step_idx].finished_at = Some(chrono::Utc::now());
-                s[stage_idx].steps[step_idx].status = if code == 0 { BuildStatus::Success } else { BuildStatus::Failed };
-                if let Some(fp) = &fingerprint {
-                    s[stage_idx].steps[step_idx].fingerprint = Some(fp.hash.clone());
-                }
-                let _ = store.update_build_stages(job.build_id, &s).await;
-
-                // Store fingerprint on success for future cache hits
-                if code == 0 {
-                    if let Some(fp) = &fingerprint {
-                        let _ = store.store_fingerprint(job.project_id, &fp.hash, &step_job.name).await;
-                    }
-                }
-
-                if code != 0 {
-                    stage_failed = true;
-                    break;
+            while let Some(result) = join_set.join_next().await {
+                match result {
+                    Ok(Ok(true)) => {} // step succeeded
+                    Ok(Ok(false)) => { stage_failed = true; } // step failed (non-zero exit)
+                    Ok(Err(e)) => { anyhow::bail!("{}", e); }
+                    Err(e) => { anyhow::bail!("task panic: {}", e); }
                 }
             }
-            Err(e) => {
-                let mut s = stages.write().await;
-                s[stage_idx].steps[step_idx].status = BuildStatus::Failed;
-                s[stage_idx].steps[step_idx].finished_at = Some(chrono::Utc::now());
-                s[stage_idx].steps[step_idx].duration_ms = Some(duration);
-                let _ = store.update_build_stages(job.build_id, &s).await;
-                anyhow::bail!("step '{}': {}", step_job.name, e);
+        } else {
+            // Sequential step
+            match run_single_step(
+                store, job, stage_idx, i, stages,
+                workspace, dep_env, build_log_dir, cgroup,
+            ).await {
+                Ok(true) => {}
+                Ok(false) => { stage_failed = true; }
+                Err(e) => { return Err(e); }
             }
+            i += 1;
         }
     }
 
@@ -402,6 +367,99 @@ async fn execute_stage(
 
     tracing::info!(stage = %stage_name, "stage done");
     Ok(())
+}
+
+/// Execute a single step: fingerprint check → execute or skip → update DB.
+/// Returns Ok(true) if step succeeded, Ok(false) if non-zero exit.
+async fn run_single_step(
+    store: &Arc<dyn Store>,
+    job: &BuildJob,
+    stage_idx: usize,
+    step_idx: usize,
+    stages: &Arc<tokio::sync::RwLock<Vec<BuildStage>>>,
+    workspace: &str,
+    dep_env: &[(String, String)],
+    build_log_dir: Option<&std::path::Path>,
+    cgroup: Option<&std::path::Path>,
+) -> anyhow::Result<bool> {
+    let step_job = &job.stages[stage_idx].steps[step_idx];
+
+    // Mark step running
+    {
+        let mut s = stages.write().await;
+        s[stage_idx].steps[step_idx].status = BuildStatus::Running;
+        s[stage_idx].steps[step_idx].started_at = Some(chrono::Utc::now());
+        let _ = store.update_build_stages(job.build_id, &s).await;
+    }
+
+    let start = Instant::now();
+
+    // Fingerprint check
+    let step_config = step_job_to_config(step_job);
+    let repo_path = std::path::Path::new(workspace);
+    let input_patterns: Vec<String> = step_config.cache
+        .as_ref()
+        .map(|c| c.paths.clone())
+        .unwrap_or_default();
+
+    let fingerprint = jetrun_engine::compute_fingerprint(&step_config, repo_path, &input_patterns)
+        .await
+        .ok();
+
+    let cache_hit = match &fingerprint {
+        Some(fp) => store.check_fingerprint(job.project_id, &fp.hash).await.unwrap_or(false),
+        None => false,
+    };
+
+    if cache_hit {
+        let duration = start.elapsed().as_millis() as u64;
+        let fp = fingerprint.as_ref().unwrap();
+        tracing::info!(step = %step_job.name, fingerprint = %fp.hash[..12], "cache hit — skipping step");
+
+        let mut s = stages.write().await;
+        s[stage_idx].steps[step_idx].status = BuildStatus::Skipped;
+        s[stage_idx].steps[step_idx].exit_code = Some(0);
+        s[stage_idx].steps[step_idx].duration_ms = Some(duration);
+        s[stage_idx].steps[step_idx].finished_at = Some(chrono::Utc::now());
+        s[stage_idx].steps[step_idx].cache_hit = true;
+        s[stage_idx].steps[step_idx].fingerprint = Some(fp.hash.clone());
+        let _ = store.update_build_stages(job.build_id, &s).await;
+        return Ok(true);
+    }
+
+    // Execute step
+    let result = execute_step(step_job, workspace, build_log_dir, dep_env, cgroup).await;
+    let duration = start.elapsed().as_millis() as u64;
+
+    match result {
+        Ok(code) => {
+            let mut s = stages.write().await;
+            s[stage_idx].steps[step_idx].exit_code = Some(code);
+            s[stage_idx].steps[step_idx].duration_ms = Some(duration);
+            s[stage_idx].steps[step_idx].finished_at = Some(chrono::Utc::now());
+            s[stage_idx].steps[step_idx].status = if code == 0 { BuildStatus::Success } else { BuildStatus::Failed };
+            if let Some(fp) = &fingerprint {
+                s[stage_idx].steps[step_idx].fingerprint = Some(fp.hash.clone());
+            }
+            let _ = store.update_build_stages(job.build_id, &s).await;
+
+            if code == 0 {
+                if let Some(fp) = &fingerprint {
+                    let _ = store.store_fingerprint(job.project_id, &fp.hash, &step_job.name).await;
+                }
+            }
+
+            Ok(code == 0)
+        }
+        Err(e) => {
+            let mut s = stages.write().await;
+            s[stage_idx].steps[step_idx].status = BuildStatus::Failed;
+            s[stage_idx].steps[step_idx].finished_at = Some(chrono::Utc::now());
+            s[stage_idx].steps[step_idx].duration_ms = Some(duration);
+            let _ = store.update_build_stages(job.build_id, &s).await;
+            anyhow::bail!("step '{}': {}", step_job.name, e);
+        }
+    }
 }
 
 // ── Step Execution ──
