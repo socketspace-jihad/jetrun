@@ -363,15 +363,21 @@ async fn execute_stage(
         let _ = store.update_build_stages(job.build_id, &s).await;
     }
 
-    // Collect artifacts before workspace cleanup (only on success)
+    // Collect artifacts before workspace cleanup (only on success, only if steps actually ran)
     if !stage_failed {
         if let Some(artifact) = &job.stages[stage_idx].artifacts {
             let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/opt/jetrun/data".into());
+            // Get fingerprint from the last step (for caching artifacts by content hash)
+            let last_fp = {
+                let s = stages.read().await;
+                s[stage_idx].steps.last().and_then(|step| step.fingerprint.clone())
+            };
             let _ = artifacts::collect(
                 std::path::Path::new(&data_dir),
                 job.build_id,
                 std::path::Path::new(workspace),
                 artifact,
+                last_fp.as_deref(),
             ).await;
         }
     }
@@ -430,6 +436,14 @@ async fn run_single_step(
         let duration = start.elapsed().as_millis() as u64;
         let fp = fingerprint.as_ref().unwrap();
         tracing::info!(step = %step_job.name, fingerprint = %fp.hash[..12], "cache hit — skipping step");
+
+        // Restore cached artifacts if stage has artifacts defined
+        if let Some(artifact) = &job.stages[stage_idx].artifacts {
+            let data_dir = std::env::var("DATA_DIR").unwrap_or_else(|_| "/opt/jetrun/data".into());
+            artifacts::restore_from_cache(
+                std::path::Path::new(&data_dir), job.build_id, &fp.hash, artifact,
+            ).await;
+        }
 
         let mut s = stages.write().await;
         s[stage_idx].steps[step_idx].status = BuildStatus::Skipped;

@@ -1,18 +1,53 @@
 //! Artifact collection — copy build outputs from workspace to persistent storage.
-//! Layout: {data_dir}/artifacts/{build_id}/{artifact_name}/{file_path}
+//!
+//! Layout:
+//!   Build artifacts:  {data_dir}/artifacts/{build_id}/{artifact_name}/
+//!   Fingerprint cache: {data_dir}/artifact-cache/{fingerprint_hash}/{artifact_name}/
+//!
+//! On cache hit: restore from artifact-cache → build artifacts (zero build time)
+//! On cache miss: collect from workspace → build artifacts + artifact-cache
 
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use jetrun_broker::types::ArtifactInfo;
 
+/// Try to restore artifacts from fingerprint cache.
+/// Returns true if all artifacts were restored (skip execution).
+pub async fn restore_from_cache(
+    data_dir: &Path,
+    build_id: Uuid,
+    fingerprint_hash: &str,
+    artifact: &ArtifactInfo,
+) -> bool {
+    let cache_dir = data_dir.join("artifact-cache").join(fingerprint_hash).join(&artifact.name);
+    if !cache_dir.exists() { return false; }
+
+    let dest_dir = artifact_dir(data_dir, build_id, &artifact.name);
+    if tokio::fs::create_dir_all(&dest_dir).await.is_err() { return false; }
+
+    match copy_dir_recursive(&cache_dir, &dest_dir).await {
+        Ok(_) => {
+            tracing::info!(
+                build_id = %build_id,
+                artifact = %artifact.name,
+                fingerprint = %&fingerprint_hash[..12],
+                "artifacts restored from cache"
+            );
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// Collect artifacts from workspace after a stage succeeds.
-/// Copies files matching `artifact.paths` from workspace to artifact storage.
+/// Also caches them by fingerprint for future builds.
 pub async fn collect(
     data_dir: &Path,
     build_id: Uuid,
     workspace: &Path,
     artifact: &ArtifactInfo,
+    fingerprint_hash: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
     let dest_dir = artifact_dir(data_dir, build_id, &artifact.name);
     tokio::fs::create_dir_all(&dest_dir).await?;
@@ -65,6 +100,17 @@ pub async fn collect(
         files = collected.len(),
         "artifacts collected"
     );
+
+    // Cache artifacts by fingerprint for future builds
+    if !collected.is_empty() {
+        if let Some(hash) = fingerprint_hash {
+            let cache_dir = data_dir.join("artifact-cache").join(hash).join(&artifact.name);
+            if tokio::fs::create_dir_all(&cache_dir).await.is_ok() {
+                let _ = copy_dir_recursive(&dest_dir, &cache_dir).await;
+                tracing::debug!(fingerprint = %&hash[..12], "artifacts cached for future builds");
+            }
+        }
+    }
 
     Ok(collected)
 }
